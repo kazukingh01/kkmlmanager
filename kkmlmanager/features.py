@@ -286,15 +286,15 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
     tens_y       = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
     tens_x_nonan = ~torch.isnan(tens_x)
     tens_y_nonan = ~torch.isnan(tens_y)
-    tens_x_rank  = tens_x_rank / tens_x_nonan.sum(dim=0)
-    tens_y_rank  = tens_y_rank / tens_y_nonan.sum(dim=0)
-    tens_x_rank[~tens_x_nonan] = 0
-    tens_y_rank[~tens_y_nonan] = 0
+    tens_x       = tens_x / tens_x_nonan.sum(dim=0)
+    tens_y       = tens_y / tens_y_nonan.sum(dim=0)
+    tens_x[~tens_x_nonan] = 0
+    tens_y[~tens_y_nonan] = 0
     # to rank
     tens_corr = torch.zeros(tens_x.shape[1], tens_y.shape[1]).to(torch.float32).to(device)
-    tens_eye  = torch.eye(tens_x.shape[1], tens_y.shape[1]).to(bool).to(device)
+    tens_eye  = torch.eye(  tens_x.shape[1], tens_y.shape[1]).to(bool).to(device)
     for i in np.arange(tens_x.shape[1]):
-        tens_diff = torch.roll(tens_x_rank,  i, 1) - tens_y_rank
+        tens_diff = torch.roll(tens_x,       i, 1) - tens_y
         tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
         tens_diff[~tens_bool] = 0
         tens_n = tens_bool.sum(dim=0)
