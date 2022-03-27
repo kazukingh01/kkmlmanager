@@ -10,20 +10,24 @@ from kkmlmanager.util.com import check_type_list
 
 __all__ = [
     "parallel_apply",
-    "apply_fill_missing_values",
     "astype_faster",
     "query",
 ]
 
 
-def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, batch_size: int=1, n_jobs: int=1):
+def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, func_aft=None, batch_size: int=1, n_jobs: int=1):
     """
     pandarallel is slow in some cases. It is twice as fast to use pandas.
     Params::
-        axis::
+        func:
+            ex) lambda x: x.rank()
+        axis:
             axis=0: df.apply(..., axis=0)
             axis=1: df.apply(..., axis=1)
             axis=2: df.groupby(...)
+        func_aft:
+            input: (list_object, index, columns)
+            ex) lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[:, z]
     """
     assert isinstance(df, pd.DataFrame)
     assert isinstance(axis, int) and axis in [0, 1, 2]
@@ -31,30 +35,21 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, batch_si
     assert isinstance(batch_size, int) and batch_size >= 1
     assert isinstance(n_jobs, int) and n_jobs > 0
     index, columns = df.index, df.columns
+    list_object = None
     if   axis == 0:
         batch = np.arange(df.shape[1])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[:, i_batch]) for i_batch in batch])
-        if len(list_object) > 0 and (isinstance(list_object[0], pd.Series) or isinstance(list_object[0], pd.DataFrame)):
-            return pd.concat(list_object, axis=1, ignore_index=False, sort=False).loc[:, columns]
-        else:
-            return list_object
     elif axis == 1:
         batch = np.arange(df.shape[0])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[i_batch   ]) for i_batch in batch])
-        if len(list_object) > 0 and (isinstance(list_object[0], pd.Series) or isinstance(list_object[0], pd.DataFrame)):
-            return pd.concat(list_object, axis=0, ignore_index=False, sort=False).loc[index, :]
-        else:
-            return list_object
     else:
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size=batch_size)([delayed(func)(dfwk) for _, dfwk in df.groupby(group_key)])
+    if len(list_object) > 0 and func_aft is not None:
+        return func_aft(list_object, index, columns)
+    else:
         return list_object
-
-def apply_fill_missing_values(df: pd.DataFrame, rep_nan, rep_inf, rep_minf, dtype=object, n_jobs: int=1) -> pd.DataFrame:
-    assert isinstance(df, pd.DataFrame)
-    assert isinstance(n_jobs, int) and n_jobs >= 1
-    return parallel_apply(df, lambda x: x.copy().fillna(rep_nan).replace(float("inf"), rep_inf).replace(float("-inf"), rep_minf).astype(dtype), axis=0, n_jobs=n_jobs)
 
 def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=1, n_jobs: int=1):
     """
@@ -85,11 +80,11 @@ def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=
         if colbool is None:
             raise Exception(f"from_dtype: {from_dtype} is not matched.")
         if colbool.sum() > 0:
-            if batch_size == 1:
-                dfwk = parallel_apply(df.loc[:, colbool].copy(), lambda x: x.astype(to_dtype), axis=0, batch_size=batch_size, n_jobs=n_jobs)
-            else:
-                list_obj = parallel_apply(df.loc[:, colbool].copy(), lambda x: x.astype(to_dtype), axis=0, batch_size=batch_size, n_jobs=n_jobs)
-                dfwk     = pd.concat(list_obj, axis=1, ignore_index=False, sort=False)
+            dfwk = parallel_apply(
+                df.loc[:, colbool].copy(), lambda x: x.astype(to_dtype), axis=0, 
+                func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False), 
+                batch_size=batch_size, n_jobs=n_jobs
+            )
             df = df.loc[:, ~colbool]
             df = pd.concat([df, dfwk], axis=1, ignore_index=False, sort=False)
     df = df.loc[:, columns]
