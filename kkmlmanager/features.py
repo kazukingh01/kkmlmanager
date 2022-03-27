@@ -299,7 +299,7 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
         tens_diff[~tens_bool] = 0
         tens_n = tens_bool.sum(dim=0)
         tenswk = 1 - ((tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n)))
-        tens_corr[torch.roll(tens_eye, i, 1)] = tenswk
+        tens_corr[torch.roll(tens_eye, i, 1)] = torch.roll(tenswk, -i, 0)
     return tens_corr
 
 def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: bool=False, dtype: str="float16", batch_size: int=100, min_n: int=10, n_jobs: int=1):
