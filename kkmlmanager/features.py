@@ -272,35 +272,35 @@ def corr_coef_pearson_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtyp
     logger.info("END")
     return ndf_corr
 
-def corr_coef_spearman_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank: bool=True, n_jobs: int=1, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     device = "cuda:0" if is_gpu else "cpu"
-    assert isinstance(input_x, np.ndarray) and len(input_x.shape) == 2
-    assert isinstance(input_y, np.ndarray) and len(input_y.shape) == 2
+    assert isinstance(df_x, pd.DataFrame)
+    assert isinstance(df_y, pd.DataFrame)
+    assert isinstance(is_to_rank, bool)
+    if is_to_rank:
+        df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, batch_size=10, n_jobs=n_jobs)
+        df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, batch_size=10, n_jobs=n_jobs)
+    input_x, input_y = df_x.values, df_y.values
     assert input_x.shape == input_y.shape
     tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
     tens_y       = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
-    tens_x_rank  = torch.sort(torch.sort(tens_x, dim=0)[1], dim=0)[1]
-    tens_y_rank  = torch.sort(torch.sort(tens_y, dim=0)[1], dim=0)[1]
     tens_x_nonan = ~torch.isnan(tens_x)
     tens_y_nonan = ~torch.isnan(tens_y)
+    tens_x_rank  = tens_x_rank / tens_x_nonan.sum(dim=0)
+    tens_y_rank  = tens_y_rank / tens_y_nonan.sum(dim=0)
+    tens_x_rank[~tens_x_nonan] = 0
+    tens_y_rank[~tens_y_nonan] = 0
     # to rank
-    tens_rank_x1, tens_rank_x2 = torch.zeros(*tens_x.shape).to(int), torch.zeros(*tens_x.shape).to(int).to(device)
-    tens_rank_y1, tens_rank_y2 = torch.zeros(*tens_y.shape).to(int), torch.zeros(*tens_y.shape).to(int).to(device)
-    for i in np.arange(tens_x.shape[0]):
-        _tens = torch.roll(tens_x, i, 1)
-        tens_rank_x1 += (_tens >  tens_x)
-        tens_rank_x2 += (_tens >= tens_x)
-        _tens = torch.roll(tens_y, i, 1)
-        tens_rank_y1 += (_tens >  tens_y)
-        tens_rank_y2 += (_tens >= tens_y)
+    tens_corr = torch.zeros(tens_x.shape[1], tens_y.shape[1]).to(torch.float32).to(device)
+    tens_eye  = torch.eye(tens_x.shape[1], tens_y.shape[1]).to(bool).to(device)
     for i in np.arange(tens_x.shape[1]):
         tens_diff = torch.roll(tens_x_rank,  i, 1) - tens_y_rank
         tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
         tens_diff[~tens_bool] = 0
-        tens_n    = tens_bool.sum(dim=0)
-        tens_diff = tens_diff / tens_n
-        (tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n))
-        raise
+        tens_n = tens_bool.sum(dim=0)
+        tenswk = 1 - ((tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n)))
+        tens_corr[torch.roll(tens_eye, i, 1)] = tenswk
+    return tens_corr
 
 def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: bool=False, dtype: str="float16", batch_size: int=100, min_n: int=10, n_jobs: int=1):
     logger.info("START")

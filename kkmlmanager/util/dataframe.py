@@ -35,7 +35,7 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, batch_si
         batch = np.arange(df.shape[1])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[:, i_batch]) for i_batch in batch])
-        if len(list_object) > 0 and isinstance(list_object[0], pd.Series):
+        if len(list_object) > 0 and (isinstance(list_object[0], pd.Series) or isinstance(list_object[0], pd.DataFrame)):
             return pd.concat(list_object, axis=1, ignore_index=False, sort=False).loc[:, columns]
         else:
             return list_object
@@ -43,7 +43,7 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, batch_si
         batch = np.arange(df.shape[0])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[i_batch   ]) for i_batch in batch])
-        if len(list_object) > 0 and isinstance(list_object[0], pd.Series):
+        if len(list_object) > 0 and (isinstance(list_object[0], pd.Series) or isinstance(list_object[0], pd.DataFrame)):
             return pd.concat(list_object, axis=0, ignore_index=False, sort=False).loc[index, :]
         else:
             return list_object
