@@ -98,7 +98,7 @@ def get_features_by_variance(
     logger.info("END")
     return sebool
 
-def corr_coef_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
     """
     ref: https://sci-pursuit.com/math/statistics/correlation-coefficient.html
     """
@@ -199,7 +199,7 @@ def corr_coef_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.
     logger.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_gpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_gpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
     logger.info("START")
     assert input_x.shape[0] == input_y.shape[0]
     tens = []
@@ -235,7 +235,7 @@ def corr_coef_gpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=torch.
     logger.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=np.float32, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=np.float32, min_n: int=10) -> np.ndarray:
     logger.info("START")
     assert input_x.shape[0] == input_y.shape[0]
     input_x, input_y = input_x.astype(_dtype), input_y.astype(_dtype)
@@ -272,6 +272,36 @@ def corr_coef_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=np.flo
     logger.info("END")
     return ndf_corr
 
+def corr_coef_spearman_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+    device = "cuda:0" if is_gpu else "cpu"
+    assert isinstance(input_x, np.ndarray) and len(input_x.shape) == 2
+    assert isinstance(input_y, np.ndarray) and len(input_y.shape) == 2
+    assert input_x.shape == input_y.shape
+    tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y       = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_x_rank  = torch.sort(torch.sort(tens_x, dim=0)[1], dim=0)[1]
+    tens_y_rank  = torch.sort(torch.sort(tens_y, dim=0)[1], dim=0)[1]
+    tens_x_nonan = ~torch.isnan(tens_x)
+    tens_y_nonan = ~torch.isnan(tens_y)
+    # to rank
+    tens_rank_x1, tens_rank_x2 = torch.zeros(*tens_x.shape).to(int), torch.zeros(*tens_x.shape).to(int).to(device)
+    tens_rank_y1, tens_rank_y2 = torch.zeros(*tens_y.shape).to(int), torch.zeros(*tens_y.shape).to(int).to(device)
+    for i in np.arange(tens_x.shape[0]):
+        _tens = torch.roll(tens_x, i, 1)
+        tens_rank_x1 += (_tens >  tens_x)
+        tens_rank_x2 += (_tens >= tens_x)
+        _tens = torch.roll(tens_y, i, 1)
+        tens_rank_y1 += (_tens >  tens_y)
+        tens_rank_y2 += (_tens >= tens_y)
+    for i in np.arange(tens_x.shape[1]):
+        tens_diff = torch.roll(tens_x_rank,  i, 1) - tens_y_rank
+        tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
+        tens_diff[~tens_bool] = 0
+        tens_n    = tens_bool.sum(dim=0)
+        tens_diff = tens_diff / tens_n
+        (tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n))
+        raise
+
 def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: bool=False, dtype: str="float16", batch_size: int=100, min_n: int=10, n_jobs: int=1):
     logger.info("START")
     assert isinstance(df, pd.DataFrame)
@@ -290,12 +320,12 @@ def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: boo
             for batch_y in batch[i:]:
                 input_x, input_y = df.iloc[:, batch_x], df.iloc[:, batch_y]
                 input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
-                ndf_corr = corr_coef_gpu_2array(input_x, input_y, _dtype=getattr(torch, dtype), min_n=min_n)
+                ndf_corr = corr_coef_pearson_gpu_2array(input_x, input_y, _dtype=getattr(torch, dtype), min_n=min_n)
                 df_corr.iloc[batch_x, batch_y] = ndf_corr
     else:
         def work(input_x, input_y, dtype, min_n):
             input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
-            ndf_corr = corr_coef_cpu_2array(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
+            ndf_corr = corr_coef_pearson_cpu_2array(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
             return ndf_corr
         list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
             delayed(lambda x, y, z: (z, work(x, y, dtype, min_n)))(df.iloc[:, batch_x], df.iloc[:, batch_y], (batch_x, batch_y))
