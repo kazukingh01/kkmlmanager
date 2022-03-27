@@ -278,8 +278,8 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
     assert isinstance(df_y, pd.DataFrame)
     assert isinstance(is_to_rank, bool)
     if is_to_rank:
-        df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, batch_size=10, n_jobs=n_jobs)
-        df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, batch_size=10, n_jobs=n_jobs)
+        df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
+        df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
     input_x, input_y = df_x.values, df_y.values
     assert input_x.shape == input_y.shape
     tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
