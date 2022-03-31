@@ -1,350 +1,216 @@
+import sys, pickle, os
 import numpy as np
 import pandas as pd
 from scipy import stats
-from sklearn.ensemble import ExtraTreesClassifier
+from typing import List, Union
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import roc_curve, auc
-import matplotlib.pyplot as plt
 
 # local package
-from kkutils.lib.ml.procreg import ProcRegistry
-from kkutils.lib.ml.calib import Calibrater
-import kkutils.lib.ml.procs as kkpr
-from kkutils.util.ml.feature import search_features_by_correlation, search_features_by_variance
-from kkutils.util.ml.eval import is_classification_model, evalate, eval_classification_model, eval_regressor_model, predict_detail
-from kkutils.util.ml.hypara import search_hyperparams_by_optuna
-from kkutils.util.ml.utils import calc_randomtree_importance, calc_parallel_mutual_information, split_data_balance, conv_validdata_in_fitparmas
-from kkutils.util.dataframe import conv_ndarray
-from kkutils.util.com import is_callable, correct_dirpath, makedirs, save_pickle, load_pickle, set_logger
-_logname = __name__
+from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
+from kkmlmanager.util.numpy import isin_compare_string
+from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
+from kkmlmanager.util.logger import set_logger
+logger = set_logger(__name__)
 
 
 __all__ = [
-    "MyModel",
-    "load_my_model"
+    "MLManager",
+    "load_manager"
 ]
 
 
 class MLManager:
     def __init__(
-        self, name: str, 
+        self,
         # model parameter
-        colname_explain: np.ndarray, colname_answer: np.ndarray, colname_other: np.ndarray = None,
-        # model
-        model=None, 
+        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_oth: List[str]=None,
         # common parameter
-        outdir: str="./output/", random_seed: int=1, n_jobs: int=1, log_level :str="info"
+        outdir: str="./output/", random_seed: int=1, n_jobs: int=1
     ):
-        self.logger = set_logger(_logname + "." + name, log_level=log_level, internal_log=True)
-        self.logger.debug("START")
-        self.name        = name
+        self.logger = set_logger(f"{__class__.__name__}.{id(self)}", internal_log=True)
+        self.logger.info("START")
+        if isinstance(columns_ans, str): columns_ans = [columns_ans, ]
+        if columns_oth is None: columns_oth = []
+        assert check_type_list(columns_exp, str)
+        assert check_type_list(columns_ans, str)
+        assert check_type_list(columns_oth, str)
+        assert isinstance(outdir, str)
+        assert isinstance(random_seed, int) and random_seed >= 0
+        assert isinstance(n_jobs, int) and n_jobs >= 1
+        self.columns_exp = np.array(columns_exp)
+        self.columns_ans = np.array(columns_ans)
+        self.columns_oth = np.array(columns_oth)
         self.outdir      = correct_dirpath(outdir)
         self.random_seed = random_seed
         self.n_jobs      = n_jobs
-        self.colname_explain       = conv_ndarray(colname_explain)
-        self.colname_explain_hist  = []
-        self.colname_answer        = conv_ndarray([colname_answer]) if isinstance(colname_answer, str) else conv_ndarray(colname_answer)
-        self.colname_other         = conv_ndarray(colname_other) if colname_other is not None else np.array([])
-        self.df_correlation                     = pd.DataFrame()
-        self.df_feature_importances             = pd.DataFrame()
-        self.df_feature_importances_randomtrees = pd.DataFrame()
-        self.df_feature_importances_modeling    = pd.DataFrame()
-        self.df_adversarial_valid               = pd.DataFrame()
-        self.df_adversarial_importances         = pd.DataFrame()
-        self.model          = model
-        self.is_model_fit   = False
-        self.optuna         = None
-        self.calibrater     = None
-        self.is_calibration = False
-        self.preproc        = ProcRegistry(self.colname_explain, self.colname_answer)
-        self.n_trained_samples = {}
-        self.n_tested_samples  = {}
-        self.index_train    = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
-        self.index_valid    = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
-        self.index_valid_cv = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
-        self.index_test     = np.array([]) # 実際に残す際はマルチインデックスかもしれないので、numpy形式にはならない
-        self.df_pred_train    = pd.DataFrame()
-        self.df_pred_valid    = pd.DataFrame()
-        self.df_pred_valid_cv = pd.DataFrame()
-        self.df_pred_test     = pd.DataFrame()
-        self.df_cm_train      = pd.DataFrame()
-        self.df_cm_valid      = pd.DataFrame()
-        self.df_cm_valid_cv   = pd.DataFrame()
-        self.df_cm_test       = pd.DataFrame()
-        self.se_eval_train    = pd.Series(dtype=object)
-        self.se_eval_valid    = pd.Series(dtype=object)
-        self.se_eval_valid_cv = pd.Series(dtype=object)
-        self.se_eval_test     = pd.Series(dtype=object)
-        self.fig = {}
-        self.logger.info("create instance. name:"+name)
-        # model が set されていれば初期化しておく
-        if model is not None: self.set_model(model)
-        self.logger.debug("END")
-        
+        self.initialize()
+        self.logger.info("END")
 
-    def __del__(self):
-        pass
-
-
-    def set_model(self, model, **params):
-        """
-        モデルのセット(モデルに関わる箇所は初期化)
-        Params::
-            model: model
-            **params: その他インスタンスに追加したい変数
-        """
-        self.logger.debug("START")
-        self.model          = model
-        self.optuna         = None
-        self.calibrater     = None
-        self.is_calibration = False
-        self.is_model_fit   = False
-        for param in params.keys():
-            # 追加のpreprocessingを扱う場合など
-            self.__setattr__(param, params.get(param))
-        self.logger.info(f'set model: \n{self.model}')
-        self.logger.debug("END")
+    def __str__(self):
+        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_oth}"
     
-
-    def is_classification_model(self) -> bool:
-        """
-        Return:: 分類モデルの場合はTrueを返却する
-        """
-        return is_classification_model(self.model)
-    
-
-    def update_features(self, cut_features: np.ndarray=None, alive_features: np.ndarray=None):
+    def initialize(self):
         self.logger.info("START")
-        self.colname_explain_hist.append(self.colname_explain.copy())
-        if alive_features is None:
-            self.colname_explain = self.colname_explain[~np.isin(self.colname_explain, cut_features)]
+        self.model        = None
+        self.model_args   = None
+        self.model_kwargs = None
+        self.is_fit       = False
+        self.columns_hist = [self.columns_exp.copy(), ]
+        self.columns      = self.columns_exp.copy()
+        self.logger.info("END")
+
+    def set_model(self, model, *args, **kwargs):
+        self.logger.info("START")
+        self.initialize()
+        self.model        = model(*args, **kwargs)
+        self.model_args   = args
+        self.model_kwargs = kwargs
+        self.is_fit       = False
+        self.logger.info("END")
+
+    def update_features(self, features: Union[List[str], np.ndarray]):
+        self.logger.info("START")
+        assert check_type(features, [np.ndarray, list])
+        if isinstance(features, list):
+            check_type_list(features, str)
+            features = np.ndarray(features)
+        assert np.all(isin_compare_string(features, self.columns))
+        self.columns_hist.append(self.columns.copy())
+        self.columns = features.copy()
+        self.logger.info(f"columns new: {self.columns.shape}, columns before:{self.columns_hist[-1].shape}")
+        self.logger.info("END")
+
+    def cut_features_by_variance(self, df: pd.DataFrame=None, cutoff: float=0.99, ignore_nan: bool=False, batch_size: int=128):
+        self.logger.info("START")
+        assert df is None or isinstance(df, pd.DataFrame)
+        assert isinstance(cutoff, float) and 0 < cutoff <= 1.0
+        assert isinstance(ignore_nan, bool)
+        self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, ignore_nan: {ignore_nan}")
+        attr_name = f"features_var_{ignore_nan}_{str(cutoff)[:5].replace('.', '')}"
+        if df is not None:
+            sebool = get_features_by_variance(df[self.columns], cutoff=cutoff, ignore_nan=ignore_nan, batch_size=batch_size, n_jobs=self.n_jobs)
+            setattr(self, attr_name, sebool.copy())
         else:
-            cut_features         = self.colname_explain[~np.isin(self.colname_explain, alive_features)]
-            self.colname_explain = self.colname_explain[ np.isin(self.colname_explain, alive_features)]
-        self.preproc.set_columns(self.colname_explain, type_proc="x")
-        self.logger.info(f"cut   features :{cut_features.shape[0]        }. features...{cut_features}")
-        self.logger.info(f"alive features :{self.colname_explain.shape[0]}. features...{self.colname_explain}")
+            try: sebool = getattr(self, attr_name)
+            except AttributeError:
+                logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+        columns = sebool.index[~sebool].values
+        if df is not None:
+            columns_del = self.columns[~isin_compare_string(self.columns, columns)].copy()
+            for x in columns_del:
+                sewk = df[x].value_counts().sort_values(ascending=False)
+                self.logger.info(
+                    f"feature: {x}, n nan: {df[x].isna().sum()}, max count: {(sewk.index[0], sewk.iloc[0]) if len(sewk) > 0 else float('nan')}, " + 
+                    f"value unique: {df[x].unique()[:5]}"
+                )
+        self.update_features(columns)
         self.logger.info("END")
-
-
-    def cut_features_by_variance(self, df: pd.DataFrame, cutoff: float=0.99, ignore_nan: bool=False):
-        """
-        各特徴量の値の重複度合いで特徴量をカットする
-        Params::
-            df: input DataFrame. 既に対象の特徴量だけに絞られた状態でinputする
-            cutoff: 重複度合い. 0.99の場合、全体の数値の内99%が同じ値であればカットする
-            ignore_nan: nanも重複度合いの一部とするかどうか
-        """
-        self.logger.info("START")
-        self.logger.info(f"df shape:{df.shape}, cutoff:{cutoff}, ignore_nan:{ignore_nan}")
-        self.logger.info(f"features:{self.colname_explain.shape}", )
-        df = df[self.colname_explain] # 関数が入れ子に成りすぎてメモリが膨大になっている
-        cut_features = search_features_by_variance(df, cutoff=cutoff, ignore_nan=ignore_nan, n_jobs=self.n_jobs)
-        self.update_features(cut_features) # 特徴量の更新
-        self.logger.info("END")
-
 
     def cut_features_by_correlation(
-        self, df: pd.DataFrame=None, cutoff=0.9, ignore_nan_mode=0, 
-        n_div_col=1, on_gpu_size=1, min_n_not_nan=10, _dtype: str="float16",
-        is_proc: bool=True
-    ):
-        """
-        相関係数の高い値の特徴量をカットする
-        ※欠損無視(ignore_nan=True)しての計算は計算量が多くなるので注意
-        Params::
-            cutoff: 相関係数の閾値
-            ignore_nan_mode: 計算するモード
-                0: np.corrcoef で計算. nan がないならこれで良い
-                1: np.corrcoef で計算. nan は平均値で埋める
-                2: pandas で計算する. nan は無視して計算するが遅いので並列化している
-                3: GPUを使って高速に計算する. nanは無視して計算する
-            on_gpu_size: ignore_nan_mode=3のときに使う. 行列が全てGPUに乗り切らないときに、何分割するかの数字
-        """
-        self.logger.info("START")
-        self.logger.info(f"df shape:{df.shape if df is not None else None}, cutoff:{cutoff}, ignore_nan_mode:{ignore_nan_mode}")
-        self.logger.info(f"features:{self.colname_explain.shape}")
-        if is_proc:
-            df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
-            df_corr, _ = search_features_by_correlation(
-                df[self.colname_explain], cutoff=cutoff, ignore_nan_mode=ignore_nan_mode, 
-                n_div_col=n_div_col, on_gpu_size=on_gpu_size, min_n_not_nan=min_n_not_nan, 
-                _dtype=_dtype, n_jobs=self.n_jobs
-            )
-            self.df_correlation = df_corr.copy()
-        if cutoff < 1.0 and cutoff > 0:
-            alive_features, cut_features = self.features_by_correlation(cutoff)
-            self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
-        self.logger.info("END")
-
-
-    def cut_features_by_random_tree_importance(
-        self, df: pd.DataFrame=None, cut_ratio: float=0, sort: bool=True, calc_randomtrees: bool=False, **kwargs
+        self, df: pd.DataFrame=None, cutoff: float=0.99, sample_size: int=10000, dtype: str="float16", is_gpu: bool=False, 
+        corr_type: str="pearson", batch_size: int=100, min_n: int=10, **kwargs
     ):
         self.logger.info("START")
-        self.logger.info("cut_ratio:%s", cut_ratio)
-        if self.model is None:
-            self.logger.raise_error("model is not set !!")
-        if calc_randomtrees:
-            if df is None: self.logger.raise_error("dataframe is None !!")
-            if self.colname_answer.shape[0] > 1: self.logger.raise_error(f"answer has over 1 columns. {self.colname_answer}")
-            df   = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
-            proc = ProcRegistry(self.colname_explain, self.colname_answer)
-            proc.register(
-                [
-                    kkpr.MyAsType(np.float32),
-                    kkpr.MyReplaceValue(float( "inf"), float("nan")), 
-                    kkpr.MyReplaceValue(float("-inf"), float("nan")),
-                    kkpr.MyFillNaMinMax(),
-                ], type_proc="x"
+        assert df is None or isinstance(df, pd.DataFrame)
+        assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
+        assert isinstance(sample_size, int) and sample_size > 0
+        df = df.iloc[np.random.permutation(np.arange(df.shape[0]))[:sample_size], :].copy()
+        self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, dtype: {dtype}, is_gpu: {is_gpu}, corr_type: {corr_type}")
+        attr_name = f"features_corr_{corr_type}"
+        if df is not None:
+            df_corr = get_features_by_correlation(
+                df[self.columns], dtype=dtype, is_gpu=is_gpu, corr_type=corr_type, 
+                batch_size=batch_size, min_n=min_n, n_jobs=self.n_jobs, **kwargs
             )
-            proc.register(
-                [
-                    kkpr.MyAsType(np.int32),
-                ], type_proc="y"
-            )
-            proc.fit(df)
-            X, Y = proc(df, autofix=True, x_proc=True, y_proc=True, row_proc=True)
-            self.df_feature_importances_randomtrees = calc_randomtree_importance(
-                X, Y, colname_explain=self.colname_explain, 
-                is_cls_model=self.is_classification_model(), n_jobs=self.n_jobs, **kwargs
-            )
-        if sort:
-            self.logger.info("sort features by randomtree importance.")
-            self.colname_explain_hist.append(self.colname_explain.copy())
-            columns = self.df_feature_importances_randomtrees["feature_name"].values.copy()
-            self.colname_explain = columns[np.isin(columns, self.colname_explain)]
-        if cut_ratio > 0:
-            self.logger.info(f"cut features by randomtree importance. cut_ratio: {cut_ratio}")
-            alive_features, cut_features = self.features_by_random_tree_importance(cut_ratio)
-            self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
-        self.logger.info("END")
-    
-
-    def cut_features_by_mutual_information(self, df: pd.DataFrame, calc_size: int=50, bins: int=10, base_max: int=1):
-        self.logger.info("START")
-        df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True)
-        proc = ProcRegistry(self.colname_explain, self.colname_answer)
-        proc.register(
-            [
-                kkpr.MyAsType(np.float16),
-                kkpr.MyReplaceValue(float( "inf"), float("nan")), 
-                kkpr.MyReplaceValue(float("-inf"), float("nan")),
-                kkpr.MyMinMaxScaler(feature_range=(0, base_max - (1./bins/10.))),
-            ], type_proc="x"
-        )
-        proc.fit(df)
-        ndf_x, _ = proc(df, autofix=True, x_proc=True, y_proc=False, row_proc=False)
-        df       = pd.DataFrame(ndf_x, columns=self.colname_explain)
-        self.df_mutual_information = calc_parallel_mutual_information(df, n_jobs=self.n_jobs, calc_size=calc_size, bins=bins, base_max=base_max)
-        self.logger.info("END")
-    
-
-    def cut_features_by_adversarial_validation(self, cutoff=0.01):
-        self.logger.info("START")
-        self.logger.info(f"cutoff:{cutoff}")
-        self.logger.info(f"features:{self.colname_explain.shape}")
-        if self.df_adversarial_importances.shape[0] == 0:
-            self.logger.raise_error("Run adversarial_validation() first.")
-        alive_features, cut_features = self.features_by_adversarial_validation(cutoff)
-        self.update_features(cut_features, alive_features=alive_features) # 特徴量の更新
+            for i in range(df_corr.shape[0]): df_corr.iloc[i:, i] = float("nan")
+            setattr(self, attr_name, df_corr.copy())
+        else:
+            try: df_corr = getattr(self, attr_name)
+            except AttributeError:
+                logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+        if cutoff is not None:
+            columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].values
+            columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
+            for x in columns_del:
+                sewk  = df_corr.loc[:, x].copy()
+                index = np.where((sewk > cutoff) | (sewk < -cutoff))[0][0]
+                self.logger.info(f"feature: {x}, compare: {sewk.index[index]}, corr: {sewk.iloc[index]}")
+            columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            self.update_features(columns)
         self.logger.info("END")
 
-
-    def features_by_correlation(self, cutoff: float) -> (np.ndarray, np.ndarray):
-        self.logger.info("START")
-        columns = self.df_correlation.columns.values.copy()
-        alive_features = columns[(((self.df_correlation > cutoff) | (self.df_correlation < -1*cutoff)).sum(axis=0) == 0)].copy()
-        cut_list       = columns[~np.isin(columns, alive_features)]
-        self.logger.info("END")
-        return alive_features, cut_list
-
-
-    def features_by_adversarial_validation(self, cutoff: float) -> (np.ndarray, np.ndarray):
-        self.logger.info("START")
-        columns = self.df_adversarial_importances["feature_name"].values.copy()
-        cut_list       = columns[(self.df_adversarial_importances["importance"] > cutoff).values]
-        alive_features = columns[~np.isin(columns, cut_list)]
-        self.logger.info("END")
-        return alive_features, cut_list
-
-
-    def features_by_random_tree_importance(self, cut_ratio: float) -> (np.ndarray, np.ndarray):
-        self.logger.info("START")
-        self.logger.info("cut_ratio:%s", cut_ratio)
-        if self.model is None:
-            self.logger.raise_error("model is not set !!")
-        if self.df_feature_importances_randomtrees.shape[0] == 0:
-            self.logger.raise_error("df_feature_importances_randomtrees is None. You should do calc_randomtree_importance() first !!")
-        _n = int(self.df_feature_importances_randomtrees.shape[0] * cut_ratio)
-        alive_features = self.df_feature_importances_randomtrees.iloc[:-1*_n ]["feature_name"].values.copy()
-        cut_list       = self.df_feature_importances_randomtrees.iloc[ -1*_n:]["feature_name"].values.copy()
-        self.logger.info("END")
-        return alive_features, cut_list
-
-
-    def feature_selection_with_random_tree_importance(
-        self, df_train: pd.DataFrame, df_valid: pd.DataFrame, fit_params: dict={}, tuning_eval: str="",
-        cut_corr: float=0.9, imp_top: float=0.1, imp_under: float=0.1, step: float=0.1
+    def cut_features_by_randomtree_importance(
+        self, df: pd.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, **kwargs
     ):
-        """
-        random tree importance の Top X% と Under Y% の特徴量を mix して、どこまでが精度が下がらないかの検証を行う。
-        ※経緯として、PCA特徴量を追加したら著しく精度が悪くなったので、精度が悪くならない程度の特徴量カットをしたい
-        """
         self.logger.info("START")
-        if self.model is None:
-            self.logger.raise_error("model is not set !!")
-        if self.df_correlation.shape[0] == 0:
-            self.logger.raise_error("df_correlation is None. You should do cut_features_by_correlation() first !!")
-        if self.df_feature_importances_randomtrees.shape[0] == 0:
-            self.logger.raise_error("df_feature_importances_randomtrees is None. You should do calc_randomtree_importance() first !!")
-        colname_explain_bk = self.colname_explain.copy()
-
-        self.colname_explain = self.df_correlation.columnsc.opy()
-        self.cut_features_by_correlation(None, cutoff=cut_corr, is_proc=False)
-        colname_features_randomtree = self.df_feature_importances_randomtrees["feature_name"].values.copy()
-        n = colname_features_randomtree.shape[0]
-        colname_explain_new = np.array(colname_features_randomtree[:int(n*imp_top)].tolist() + colname_features_randomtree[-int(n*imp_under):].tolist())
-        self.update_features(alive_features=colname_explain_new)
-        self.preproc.fit(df_train)
-        x_train, y_train = self.preproc(df_train, autofix=True)
-        x_valid, y_valid = self.preproc(df_valid, autofix=True)
-        fit_params = conv_validdata_in_fitparmas(fit_params.copy(), x_valid, y_valid)
-        self.model.fit(X_train, Y_train, **fit_params)
-
+        assert df is None or isinstance(df, pd.DataFrame)
+        assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
+        assert len(self.columns_ans.shape) == 1
+        self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, max_iter: {max_iter}, min_count: {min_count}")
+        if df is not None:
+            is_reg = False if df[self.columns_ans].dtypes[0] in [int, np.int16, np.int32, np.int64] else True
+            df_treeimp = get_features_by_randomtree_importance(
+                df, self.columns.tolist(), self.columns_ans[0], is_reg=is_reg, max_iter=max_iter, 
+                min_count=min_count, n_jobs=self.n_jobs, **kwargs
+            )
+            df_treeimp = df_treeimp.sort_values("ratio", ascending=False)
+            self.features_treeimp = df_treeimp.copy()
+        else:
+            try: df_treeimp = getattr(self, "features_treeimp")
+            except AttributeError:
+                logger.raise_error(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
+        columns_sort = df_treeimp.index.values.copy()
+        self.columns = np.concatenate([columns_sort[isin_compare_string(columns_sort, self.columns)], self.columns[~isin_compare_string(self.columns, columns_sort)]])
+        if cutoff is not None:
+            columns_del = columns_sort[int(len(columns_sort) * cutoff):]
+            columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
+            for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_treeimp.loc[x, 'ratio']}")
+            columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            self.update_features(columns)
         self.logger.info("END")
 
-
-    def init_proc(self):
+    def cut_features_by_adversarial_validation(
+        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: Union[int, float]=None, n_split: int=5, n_cv: int=5, **kwargs
+    ):
         self.logger.info("START")
-        self.preproc = ProcRegistry(self.colname_explain, self.colname_answer)
+        assert df_train is None or isinstance(df_train, pd.DataFrame)
+        assert df_test  is None or isinstance(df_test,  pd.DataFrame)
+        assert type(df_train) == type(df_test)
+        assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
+        if df_train is not None:
+            df_adv, _ = get_features_by_adversarial_validation(
+                df_train, df_test, self.columns.tolist(), columns_ans=None, 
+                n_split=n_split, n_cv=n_cv, n_jobs=self.n_jobs, **kwargs
+            )
+            df_adv = df_adv.sort_values("ratio", ascending=False)
+            self.features_adversarial = df_adv.copy()
+        else:
+            try: df_adv = getattr(self, "features_adversarial")
+            except AttributeError:
+                logger.raise_error(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
+        if cutoff is not None:
+            columns_del = df_adv.index[df_adv["ratio"] >= cutoff]
+            columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
+            for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_adv.loc[x, 'ratio']}")
+            columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            self.update_features(columns)
         self.logger.info("END")
 
-
-    def set_default_proc(self, df: pd.DataFrame):
-        self.logger.info("START")
-        self.init_proc()
-        self.preproc.register(
-            [
-                kkpr.MyAsType(np.float32),
-                kkpr.MyReplaceValue(float( "inf"), float("nan")), 
-                kkpr.MyReplaceValue(float("-inf"), float("nan"))
-            ], type_proc="x"
-        )
-        self.preproc.register(
-            [
-                (kkpr.MyAsType(np.int32) if self.is_classification_model() else kkpr.MyAsType(np.float32)),
-                kkpr.MyReshape(-1),
-            ], type_proc="y"
-        )
-        self.preproc.register(
-            [
-                kkpr.MyDropNa(self.colname_answer)
-            ], type_proc="row"
-        )
-        self.preproc.fit(df)
-        self.logger.info("END")
-
+    def cut_features_auto(
+        self, df: pd.DataFrame=None, df_test: pd.DataFrame=None, 
+        list_proc: List[str] = [
+            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False, batch_size=128)",
+            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True,  batch_size=128)",
+            "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000)",
+            "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, n_split=3, n_cv=2)",
+            "self.cut_features_by_correlation(df, cutoff=0.99, dtype='float16', is_gpu=True, corr_type='pearson',  batch_size=2000, min_n=100)",
+            "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='spearman', batch_size=500,  min_n=100)",
+            "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
+        ]
+    ):
+        for proc in list_proc:
+            eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test})
 
     def eval_model(self, df_score, **eval_params) -> (pd.DataFrame, pd.Series, ):
         """
@@ -510,91 +376,6 @@ class MLManager:
             self.df_cm_valid_cv   = df_conf.copy()
             self.se_eval_valid_cv = se_eval.astype(str).copy()
             self.logger.info(f'\n{self.df_cm_valid_cv}\n{self.se_eval_valid_cv}')
-        self.logger.info("END")
-    
-
-    def adversarial_validation(
-            self, df_train: pd.DataFrame, df_test: pd.DataFrame, use_answer: bool=False,
-            model=None, n_splits: int=5, n_estimators: int=1000
-        ):
-        """
-        adversarial validation. テストデータのラベルを判別するための交差顕彰
-        testdataかどうかを判別しやすい特徴を省いたり、test dataの分布に近いデータを選択する事に使用する
-        Params::
-            df_train: train data
-            df_test: test data
-            model: 分類モデルのインスタンス
-            n_splits: 何分割交差顕彰を行うか
-        """
-        self.logger.info("START")
-        self.logger.info(f'df_train shape: {df_train.shape}, df_test shape: {df_test.shape}')
-        self.logger.info(f"features: {self.colname_explain.shape}, answer: {self.colname_answer}")
-        if model is None: model = ExtraTreesClassifier(n_estimators=n_estimators, n_jobs=self.n_jobs)
-        self.logger.info(f'model: \n{model}')
-        # 前処理登録
-        proc = ProcRegistry(self.colname_explain, self.colname_answer)
-        proc.register(
-            [
-                kkpr.MyAsType(np.float32),
-                kkpr.MyReplaceValue(float( "inf"), float("nan")), 
-                kkpr.MyReplaceValue(float("-inf"), float("nan")),
-                kkpr.MyFillNaMinMax(add_value=0),
-            ], type_proc="x"
-        )
-        proc.register(
-            [
-                kkpr.MyAsType(np.int32),
-                kkpr.MyReshape(-1),
-            ], type_proc="y"
-        )
-        proc.fit(df_train)
-        # numpyに変換(前処理の結果を反映する
-        X_train, Y_train = proc(df_train, autofix=True, y_proc=use_answer, x_proc=True, row_proc=True)
-        X_test,  Y_test  = proc(df_test,  autofix=True, y_proc=use_answer, x_proc=True, row_proc=True)
-        if use_answer:
-            # データをくっつける(正解ラベルも使う)
-            X_train = np.concatenate([X_train, Y_train.reshape(-1).reshape(-1, 1)], axis=1).astype(X_train.dtype) #X_trainの型でCASTする
-            X_test  = np.concatenate([X_test,  Y_test .reshape(-1).reshape(-1, 1)], axis=1).astype(X_test.dtype ) #X_test の型でCASTする
-        Y_train = np.concatenate([np.zeros(X_train.shape[0]), np.ones(X_test.shape[0])], axis=0).astype(np.int32) # 先にこっちを作る
-        X_train = np.concatenate([X_train, X_test], axis=0).astype(X_train.dtype) # 連結する
-        ## データのスプリット.(under samplingにしておく)
-        train_indexes, test_indexes = split_data_balance(Y_train, n_splits=n_splits, y_type="cls", weight="balance", is_bootstrap=False, random_seed=self.random_seed)
-
-        # 交差検証開始
-        i_split = 1
-        df_score, df_importance = pd.DataFrame(), pd.DataFrame()
-        for train_index, test_index in zip(train_indexes, test_indexes):
-            self.logger.info(f"create model by split samples, Cross Validation : {i_split} start...")
-            _X_train = X_train[train_index]
-            _Y_train = Y_train[train_index]
-            _X_test  = X_train[test_index]
-            _Y_test  = Y_train[test_index]
-            model.fit(_X_train, _Y_train)
-            self.logger.info("create model by split samples, Cross Validation : %s end...", i_split)
-            # 結果の格納
-            dfwk = predict_detail(model, _X_test)
-            dfwk["answer"] = _Y_test
-            dfwk["index"]  = test_index # concat前のtrain dataのindexは意味ある
-            dfwk["type"]    = "test"
-            dfwk["i_split"] = i_split
-            df_score = pd.concat([df_score, dfwk], axis=0, ignore_index=True, sort=False)
-            i_split += 1
-            # 特徴量の重要度
-            if is_callable(model, "feature_importances_") == True:
-                if use_answer:
-                    _df = pd.DataFrame(np.array([self.colname_explain.tolist() + self.colname_answer.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
-                else:
-                    _df = pd.DataFrame(np.array([self.colname_explain.tolist(), model.feature_importances_]).T, columns=["feature_name","importance"])
-                _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
-                df_importance = pd.concat([df_importance, _df.copy()], axis=0, ignore_index=True, sort=False)
-        df_score["index_df"] = -1
-        df_score.loc[(df_score["answer"] == 0), "index_df"] = df_train.index[df_score.loc[(df_score["answer"] == 0), "index"].values]
-        df_score.loc[(df_score["answer"] == 1), "index_df"] = df_test .index[df_score.loc[(df_score["answer"] == 1), "index"].values - df_train.shape[0]]
-        self.logger.info(f'{eval_classification_model(df_score, "answer", "predict", ["predict_proba_0", "predict_proba_1"])}')
-        self.df_adversarial_valid = df_score.copy()
-        if df_importance.shape[0] > 0:
-            df_importance["importance"] = df_importance["importance"].astype(float)
-            self.df_adversarial_importances = df_importance.groupby("feature_name")["importance"].mean().reset_index().sort_values("importance", ascending=False)
         self.logger.info("END")
 
 
@@ -936,114 +717,33 @@ class MLManager:
         ax.grid(True)
         self.logger.info("END")
 
-
-    def save(self, dir_path: str=None, name: str=None, mode: int=0, exist_ok=False, remake=False, encoding="utf-8"):
-        """
-        mymodel のデータを保存します
-        Params::
-            dir_path: 保存するpath
-            mode:
-                0 : 全て保存
-                1 : 全体のpickleだけ保存
-                2 : 全体のpickle以外を保存
-                3 : 最低限のデータのみをpickleだけ保存
-        """
+    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8"):
         self.logger.info("START")
-        dir_path = self.outdir if not dir_path else correct_dirpath(dir_path)
-        makedirs(dir_path, exist_ok=exist_ok, remake=remake)
-        name = self.name if not name else name
-        if mode in [0,2]:
-            # モデルを保存
-            if is_callable(self.model, "dump") == True:
-                ## NNだとpickleで保存すると激重いので、dump関数がればそちらを優先する
-                self.model.dump(dir_path + name + ".model.pickle")
-            else:
-                save_pickle(self.model, dir_path + name + ".model.pickle", protocol=4)
-            # モデル情報をテキストで保存
-            with open(dir_path + name + ".metadata", mode='w', encoding=encoding) as f:
-                f.write("colname_explain_first="+str(self.colname_explain.tolist() if len(self.colname_explain_hist) == 0 else self.colname_explain_hist[0])+"\n")
-                f.write("colname_explain="      +str(self.colname_explain.tolist())+"\n")
-                f.write("colname_answer='"      +str(self.colname_answer.tolist())+"'\n")
-                f.write("n_trained_samples="    +str(self.n_trained_samples)+"\n")
-                f.write("n_tested_samples="     +str(self.n_tested_samples)+"\n")
-                for x in self.se_eval_train.index: f.write("train_"+x+"="+str(self.se_eval_train[x])+"\n")
-                for x in self.se_eval_valid.index: f.write("validation_"+x+"="+str(self.se_eval_valid[x])+"\n")
-                for x in self.se_eval_test. index: f.write("test_"+x+"="+str(self.se_eval_test [x])+"\n")
-            # ログを保存
-            with open(dir_path + name + ".log", mode='w', encoding=encoding) as f:
-                f.write(self.logger.internal_stream.getvalue())
-            # 画像を保存
-            for _x in self.fig.keys():
-                self.fig[_x].savefig(dir_path + name + "_" + _x + '.png')
-            # CSVを保存
-            self.df_feature_importances_randomtrees.to_csv(dir_path + name + ".df_feature_importances_randomtrees.csv", encoding=encoding)
-            self.df_feature_importances_modeling   .to_csv(dir_path + name + ".df_feature_importances_modeling.csv",    encoding=encoding)
-            self.df_feature_importances            .to_csv(dir_path + name + ".df_feature_importances.csv",             encoding=encoding)
-            self.df_pred_train.   to_pickle(dir_path + name + ".predict_train.pickle")
-            self.df_pred_valid.   to_pickle(dir_path + name + ".predict_valid.pickle")
-            self.df_pred_valid_cv.to_pickle(dir_path + name + ".predict_valid_cv.pickle")
-            self.df_pred_test.    to_pickle(dir_path + name + ".predict_test.pickle")
-            self.df_cm_train.   to_csv(dir_path + name + ".eval_train_confusion_matrix.csv",    encoding=encoding)
-            self.df_cm_valid.   to_csv(dir_path + name + ".eval_valid_confusion_matrix.csv",    encoding=encoding)
-            self.df_cm_valid_cv.to_csv(dir_path + name + ".eval_valid_cv_confusion_matrix.csv", encoding=encoding)
-            self.df_cm_test.    to_csv(dir_path + name + ".eval_test_confusion_matrix.csv",     encoding=encoding)
-        # 全データの保存
-        if mode in [0,1]:
-            save_pickle(self, dir_path + name + ".pickle", protocol=4)
-        if mode in [3]:
-            ## 重いデータを削除する
-            self.fig = {}
-            self.df_correlation                     = pd.DataFrame()
-            self.df_feature_importances             = pd.DataFrame()
-            self.df_feature_importances_randomtrees = pd.DataFrame()
-            self.df_feature_importances_modeling    = pd.DataFrame()
-            self.df_adversarial_valid               = pd.DataFrame()
-            self.df_adversarial_importances         = pd.DataFrame()
-            self.df_pred_train    = pd.DataFrame()
-            self.df_pred_valid    = pd.DataFrame()
-            self.df_pred_valid_cv = pd.DataFrame()
-            self.df_pred_test     = pd.DataFrame()
-            self.df_cm_train      = pd.DataFrame()
-            self.df_cm_valid      = pd.DataFrame()
-            self.df_cm_valid_cv   = pd.DataFrame()
-            self.df_cm_test       = pd.DataFrame()
-            save_pickle(self, dir_path + name + ".min.pickle", protocol=4)
+        assert isinstance(dirpath, str)
+        assert isinstance(exist_ok, bool)
+        assert isinstance(remake, bool)
+        dirpath = correct_dirpath(dirpath)
+        makedirs(dirpath, exist_ok=exist_ok, remake=remake)
+        if filename is None: filename = f"mlmanager_{id(self)}.pickle"
+        self.logger.info(f"save file: {dirpath + filename}.")
+        with open(dirpath + filename, mode='wb') as f:
+            pickle.dump(self, f, protocol=4)
+        with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
+            f.write(self.logger.internal_stream.getvalue())
         self.logger.info("END")
 
-
-    def load_model(self, filepath: str, mode: int=0):
-        """
-        モデルだけを別ファイルから読み込む
-        Params::
-            mode:
-                0: model をそのままコピー
-                1: optuna のbest params をロード
-        """
-        self.logger.info("START")
-        self.logger.info(f"load other My model :{filepath}")
-        mymodel = load_my_model(filepath)
-        if   mode == 0:
-            self.model = mymodel.model.copy()
-        elif mode == 1:
-            best_params = mymodel.optuna.best_params.copy()
-            ## 現行モデルに上書き
-            self.model = self.model.set_params(**best_params)
-        self.logger.info(f"\n{self.model}", )
-        self.logger.info("END")
-
-
-def load_my_model(filepath: str, n_jobs: int=None) -> MyModel:
-    """
-    MyModel形式をloadする
-    Params::
-        filepath: 全部が保存されたpickle名か、model名までのpathを指定する
-    """
-    logger = set_logger(_logname + ".__main__")
+def load_manager(filepath: str, n_jobs: int) -> MLManager:
     logger.info("START")
+    assert isinstance(n_jobs, int)
     logger.info(f"load file: {filepath}")
-    mymodel = load_pickle(filepath)
-    mymodel.__class__ = MyModel
-    mymodel.logger = set_logger(_logname + "." + mymodel.name, log_level="info", internal_log=True)
-    if isinstance(n_jobs, int): mymodel.n_jobs = n_jobs
+    with open(filepath, mode='rb') as f:
+        manager = pickle.load(f)
+    manager.__class__ = MLManager
+    manager.logger = set_logger(manager.logger.name, internal_log=True)
+    manager.n_jobs = n_jobs
+    if os.path.exists(f"{filepath}.log"):
+        logger.info(f"load log file: {filepath}.log")
+        with open(f"{filepath}.log", mode='r') as f:
+            manager.logger.internal_stream.write(f.read())
     logger.info("END")
-    return mymodel
+    return manager

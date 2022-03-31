@@ -84,7 +84,7 @@ class RegistryProc(object):
         if isinstance(value, pd.DataFrame):
             return f"df: {value.shape}"
         elif isinstance(value, np.ndarray):
-            return f"nd: {value.shape}"
+            return f"nd: {value.shape}, dtype: {value.dtype}"
         else:
             raise Exception(f"value: {type(value)} is not expected type.")
 

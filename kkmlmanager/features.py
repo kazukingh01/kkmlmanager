@@ -1,13 +1,15 @@
-from typing import List, Union
+from typing import List
 import pandas as pd
 import numpy as np
 import torch
 from joblib import Parallel, delayed
-from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor, RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score, accuracy_score
 
 # local package
 from kkmlmanager.regproc import RegistryProc
-from kkmlmanager.util.dataframe import parallel_apply
+from kkmlmanager.util.dataframe import parallel_apply, astype_faster
 from kkmlmanager.util.com import check_type_list
 from kkmlmanager.util.logger import set_logger
 logger = set_logger(__name__)
@@ -15,10 +17,14 @@ logger = set_logger(__name__)
 
 __all__ = [
     "get_features_by_variance",
-    "corr_coef_gpu",
     "corr_coef_gpu_2array",
-    "corr_coef_cpu_2array",
+    "corr_coef_pearson_2array_numpy",
+    "corr_coef_pearson_2array",
+    "corr_coef_spearman_2array",
+    "corr_coef_kendall_2array",
     "get_features_by_correlation",
+    "get_features_by_randomtree_importance",
+    "get_features_by_adversarial_validation",
 ]
 
 
@@ -59,9 +65,13 @@ def get_features_by_variance(
     assert isinstance(n_jobs, int) and n_jobs >= 1
     assert isinstance(batch_size, int) and batch_size > 1 # NG: batch_size=1
     df       = df.copy()
+    # In object without conversion to float, nan sort in np.sort does not come at the end
     columns  = df.columns.copy()
     df_sort  = pd.DataFrame(index=np.arange(df.shape[0]))
-    list_obj = parallel_apply(df, lambda x: [x.columns, np.sort(x.values, axis=0)], axis=0, batch_size=batch_size, n_jobs=n_jobs)
+    dtypes   = df.dtypes.copy()
+    list_obj = []
+    for _cols in df.dtypes.unique():
+        list_obj += parallel_apply(df.loc[:, dtypes.index[dtypes == _cols]], lambda x: [x.columns, np.sort(x.values, axis=0)], axis=0, batch_size=batch_size, n_jobs=n_jobs)
     df_sort  = pd.concat([pd.DataFrame(y, columns=x) for x, y in list_obj], axis=1, ignore_index=False)
     df_sort  = df_sort.loc[:, columns]
     nsize    = int(df_sort.shape[0] * cutoff) - 1
@@ -69,8 +79,8 @@ def get_features_by_variance(
     sebool   = pd.Series(False, index=df_sort.columns)
     if not ignore_nan:
         for i in range(0, df_sort.shape[0] - nsize):
-            sewk1  = df_sort.iloc[i        ]
-            sewk2  = df_sort.iloc[i + nsize]
+            sewk1  = df_sort.iloc[i        , :]
+            sewk2  = df_sort.iloc[i + nsize, :]
             boolwk = ((sewk1.isna() == sewk2.isna()) & sewk1.isna())
             boolwk = boolwk | (sewk1 == sewk2)
             sebool = sebool | boolwk
@@ -199,43 +209,10 @@ def corr_coef_pearson_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10
     logger.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_pearson_gpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
-    logger.info("START")
-    assert input_x.shape[0] == input_y.shape[0]
-    tens = []
-    for input in [input_x, input_y]:
-        tensor_max = torch.from_numpy(np.nanmax(input, axis=0)).to(_dtype).to("cuda:0")
-        tensor_min = torch.from_numpy(np.nanmin(input, axis=0)).to(_dtype).to("cuda:0")
-        tensor_max = (tensor_max - tensor_min)
-        tensor_max[tensor_max == 0] = float("inf") # To avoid division by zero
-        tens.append(torch.from_numpy(input).to(_dtype).to("cuda:0"))
-        tens[-1] = (tens[-1] - tensor_min) / tensor_max
-    tens_x, tens_y = tens
-    tens_x_mean    = torch.nanmean(tens_x, dim=0)
-    tens_y_mean    = torch.nanmean(tens_y, dim=0)
-    tens_x         = tens_x - tens_x_mean
-    tens_y         = tens_y - tens_y_mean
-    tens_x_nan     = torch.isnan(tens_x)
-    tens_y_nan     = torch.isnan(tens_y)
-    tens_x[tens_x_nan] = 0
-    tens_y[tens_y_nan] = 0
-    tens_n_Sx  = (~tens_x_nan).sum(dim=0)
-    tens_n_Sy  = (~tens_y_nan).sum(dim=0)
-    tens_x_nan = (~tens_x_nan).to(torch.float16)
-    tens_y_nan = (~tens_y_nan).to(torch.float16)
-    tens_n_Sxy = torch.mm(tens_x_nan.t(), tens_y_nan)
-    tens_Sxy   = torch.mm(tens_x.t(), tens_y)
-    tens_Sxy   = tens_Sxy / tens_n_Sxy
-    tens_Sx    = (tens_x.pow(2).sum(dim=0) / tens_n_Sx).pow(1/2).unsqueeze(0)
-    tens_Sy    = (tens_y.pow(2).sum(dim=0) / tens_n_Sy).pow(1/2).unsqueeze(0)
-    tens_SxSy  = torch.mm(tens_Sx.t(), tens_Sy)
-    tens_corr  = tens_Sxy / tens_SxSy
-    tens_corr  = torch.nan_to_num(tens_corr, nan=0, posinf=0, neginf=0)
-    tens_corr[tens_n_Sxy <= min_n] = float("nan")
-    logger.info("END")
-    return tens_corr.cpu().numpy()
-
-def corr_coef_pearson_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtype=np.float32, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, _dtype=np.float32, min_n: int=10) -> np.ndarray:
+    """
+    Faster than corr_coef_pearson_2array(..., is_gpu=False)
+    """
     logger.info("START")
     assert input_x.shape[0] == input_y.shape[0]
     input_x, input_y = input_x.astype(_dtype), input_y.astype(_dtype)
@@ -272,12 +249,62 @@ def corr_coef_pearson_cpu_2array(input_x: np.ndarray, input_y: np.ndarray, _dtyp
     logger.info("END")
     return ndf_corr
 
-def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank: bool=True, n_jobs: int=1, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+def corr_coef_pearson_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+    logger.info("START")
+    assert isinstance(input_x, np.ndarray)
+    assert isinstance(input_y, np.ndarray)
+    assert input_x.shape[0] == input_y.shape[0]
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(min_n, int) and min_n >= 0
+    assert isinstance(is_gpu, bool)
+    if not is_gpu: logger.warning("Note that the calculation is 'very SLOW'.")
     device = "cuda:0" if is_gpu else "cpu"
+    tens = []
+    for input in [input_x, input_y]:
+        input = input.astype(getattr(np, dtype))
+        tensor_max = torch.from_numpy(np.nanmax(input, axis=0)).to(getattr(torch, dtype)).to(device)
+        tensor_min = torch.from_numpy(np.nanmin(input, axis=0)).to(getattr(torch, dtype)).to(device)
+        tensor_max = (tensor_max - tensor_min)
+        tensor_max[tensor_max == 0] = float("inf") # To avoid division by zero
+        tens.append(torch.from_numpy(input).to(getattr(torch, dtype)).to(device))
+        tens[-1] = (tens[-1] - tensor_min) / tensor_max
+    tens_x, tens_y = tens
+    tens_x_mean    = torch.nanmean(tens_x, dim=0)
+    tens_y_mean    = torch.nanmean(tens_y, dim=0)
+    tens_x         = tens_x - tens_x_mean
+    tens_y         = tens_y - tens_y_mean
+    tens_x_nan     = torch.isnan(tens_x)
+    tens_y_nan     = torch.isnan(tens_y)
+    tens_x[tens_x_nan] = 0
+    tens_y[tens_y_nan] = 0
+    tens_n_Sx  = (~tens_x_nan).sum(dim=0)
+    tens_n_Sy  = (~tens_y_nan).sum(dim=0)
+    tens_x_nan = (~tens_x_nan).to(torch.float16)
+    tens_y_nan = (~tens_y_nan).to(torch.float16)
+    tens_n_Sxy = torch.mm(tens_x_nan.t(), tens_y_nan)
+    tens_Sxy   = torch.mm(tens_x.t(), tens_y)
+    tens_Sxy   = tens_Sxy / tens_n_Sxy
+    tens_Sx    = (tens_x.pow(2).sum(dim=0) / tens_n_Sx).pow(1/2).unsqueeze(0)
+    tens_Sy    = (tens_y.pow(2).sum(dim=0) / tens_n_Sy).pow(1/2).unsqueeze(0)
+    tens_SxSy  = torch.mm(tens_Sx.t(), tens_Sy)
+    tens_corr  = tens_Sxy / tens_SxSy
+    tens_corr  = torch.nan_to_num(tens_corr, nan=0, posinf=0, neginf=0)
+    tens_corr[tens_n_Sxy < min_n] = float("nan")
+    logger.info("END")
+    return tens_corr.cpu().numpy()
+
+def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank: bool=True, n_jobs: int=1, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+    logger.info("START")
     assert isinstance(df_x, pd.DataFrame)
     assert isinstance(df_y, pd.DataFrame)
     assert isinstance(is_to_rank, bool)
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(min_n, int) and min_n >= 0
+    assert isinstance(is_gpu, bool)
+    if not is_gpu: logger.warning("Note that the calculation is 'very SLOW'.")
+    device = "cuda:0" if is_gpu else "cpu"
     if is_to_rank:
+        assert isinstance(n_jobs, int) and n_jobs >= 1
         df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
         df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
     input_x, input_y = df_x.values, df_y.values
@@ -300,13 +327,132 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
         tens_n = tens_bool.sum(dim=0)
         tenswk = 1 - ((tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n)))
         tens_corr[torch.roll(tens_eye, i, 1)] = torch.roll(tenswk, -i, 0)
+    tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
+    tens_corr[tens_nonan < min_n] = float("nan")
+    logger.info("END")
     return tens_corr.cpu().numpy()
 
-def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: bool=False, dtype: str="float16", batch_size: int=100, min_n: int=10, n_jobs: int=1):
+def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", n_sample: int=1000, n_iter: int=1, min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+    logger.info("START")
+    device = "cuda:0" if is_gpu else "cpu"
+    assert isinstance(input_x, np.ndarray)
+    assert isinstance(input_y, np.ndarray)
+    assert input_x.shape == input_y.shape
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(min_n, int) and min_n >= 0
+    assert isinstance(is_gpu, bool)
+    if not is_gpu: logger.warning("Note that the calculation is 'very SLOW'.")
+    device        = "cuda:0" if is_gpu else "cpu"
+    tens_x        = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y        = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_x_nonan  = ~torch.isnan(tens_x)
+    tens_y_nonan  = ~torch.isnan(tens_y)
+    n_sample      = min(n_sample, tens_x.shape[0])
+    tens_eye      = torch.eye(n_sample, n_sample, dtype=torch.bool, device=device)
+    tens_eye      = torch.repeat_interleave(tens_eye.unsqueeze(0), tens_x.shape[1], 0)
+    tens_eye      = torch.repeat_interleave(tens_eye.unsqueeze(0), tens_x.shape[1], 0) # 2 times
+    tens_corr     = torch.zeros(tens_x.shape[1], tens_y.shape[1]).to(torch.float32).to(device)
+    tens_corr_n   = torch.zeros(tens_x.shape[1], tens_y.shape[1]).to(torch.float32).to(device)
+    ndf_index     = np.arange(tens_x.shape[0])
+    for _ in range(n_iter):
+        logger.info(f"iter: {_}")
+        index         = np.random.permutation(ndf_index)
+        _tens_x       = tens_x[index[:n_sample]]
+        _tens_y       = tens_y[index[:n_sample]]
+        _tens_x_nonan = tens_x_nonan[index[:n_sample]]
+        _tens_y_nonan = tens_y_nonan[index[:n_sample]]
+        h, w = _tens_x.shape
+        _tens_x_all       = _tens_x.T.      reshape(w, 1, h) > _tens_x.T.      reshape(w, h, 1)
+        _tens_x_nonan_all = _tens_x_nonan.T.reshape(w, 1, h) & _tens_x_nonan.T.reshape(w, h, 1)
+        h, w = _tens_y.shape
+        _tens_y_all       = _tens_y.T.      reshape(w, 1, h) > _tens_y.T.      reshape(w, h, 1)
+        _tens_y_nonan_all = _tens_y_nonan.T.reshape(w, 1, h) & _tens_y_nonan.T.reshape(w, h, 1)
+        index_x = torch.arange(_tens_x.shape[-1])
+        index_x = torch.stack([torch.roll(index_x, i, 0) for i in range(index_x.shape[0])])
+        index_y = torch.arange(_tens_y.shape[-1]).repeat(_tens_y.shape[-1]).reshape(-1, _tens_y.shape[-1])
+        tens_bool       = _tens_x_all[index_x]      == _tens_y_all[index_y]
+        tens_nonan_bool = _tens_x_nonan_all[index_x] & _tens_y_nonan_all[index_y]
+        tens_bool       = tens_bool.to(torch.int8)
+        tens_bool[tens_eye] = -1
+        tens_bool[~tens_nonan_bool] = -1
+        tens_nonan_bool[tens_eye] = False
+        tens_diff = (tens_bool == 1).sum(dim=(-1,-2)) - (tens_bool == 0).sum(dim=(-1,-2))
+        tens_n    = tens_nonan_bool.sum(dim=(-1,-2)).to(torch.int32)
+        tens_diff = tens_diff / tens_n
+        tens_diff = torch.nan_to_num(tens_diff, nan=float("nan"), posinf=float("nan"), neginf=float("nan"))
+        tens_diff[tens_n < min_n] = float("nan")
+        _isnan       = ~torch.isnan(tens_diff)
+        tens_corr_n += _isnan
+        tens_diff[~_isnan] = 0
+        tens_corr   += tens_diff
+    tens_corr = tens_corr / tens_corr_n
+    tens_corr = tens_corr.cpu().numpy()
+    tens_corr = np.nan_to_num(tens_corr, nan=float("nan"), posinf=float("nan"), neginf=float("nan"))
+    logger.info("END")
+    return tens_corr
+
+def corr_coef_kendall_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float32", n_sample: int=1000, n_iter: int=1, min_n: int=10) -> np.ndarray:
+    logger.info("START")
+    assert isinstance(input_x, np.ndarray)
+    assert isinstance(input_y, np.ndarray)
+    assert input_x.shape == input_y.shape
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(min_n, int) and min_n >= 0
+    ndf_x = input_x.astype(getattr(np, dtype))
+    ndf_y = input_y.astype(getattr(np, dtype))
+    ndf_x_nonan  = ~np.isnan(ndf_x)
+    ndf_y_nonan  = ~np.isnan(ndf_y)
+    n_sample     = min(n_sample, ndf_x.shape[0])
+    ndf_eye      = np.eye(n_sample, n_sample, dtype=bool)
+    ndf_eye      = np.tile(ndf_eye.reshape(1, *ndf_eye.shape), (ndf_x.shape[1], 1, 1))
+    ndf_eye_corr = np.eye(ndf_x.shape[1], ndf_x.shape[1], dtype=bool)
+    ndf_corr     = np.zeros((ndf_x.shape[1], ndf_y.shape[1]))
+    ndf_corr_n   = np.zeros((ndf_x.shape[1], ndf_y.shape[1]))
+    ndf_index    = np.arange(ndf_x.shape[0])
+    for _ in range(n_iter):
+        logger.info(f"iter: {_}")
+        index         = np.random.permutation(ndf_index)
+        _ndf_x       = ndf_x[index[:n_sample]]
+        _ndf_y       = ndf_y[index[:n_sample]]
+        _ndf_x_nonan = ndf_x_nonan[index[:n_sample]]
+        _ndf_y_nonan = ndf_y_nonan[index[:n_sample]]
+        h, w = _ndf_x.shape
+        _ndf_x_all       = _ndf_x.T.      reshape(w, 1, h) > _ndf_x.T.      reshape(w, h, 1)
+        _ndf_x_nonan_all = _ndf_x_nonan.T.reshape(w, 1, h) & _ndf_x_nonan.T.reshape(w, h, 1)
+        h, w = _ndf_y.shape
+        _ndf_y_all       = _ndf_y.T.      reshape(w, 1, h) > _ndf_y.T.      reshape(w, h, 1)
+        _ndf_y_nonan_all = _ndf_y_nonan.T.reshape(w, 1, h) & _ndf_y_nonan.T.reshape(w, h, 1)
+        for i in np.arange(_ndf_x_all.shape[0]):
+            ndf_bool       = (np.roll(_ndf_x_all,       i, axis=0) == _ndf_y_all)
+            ndf_nonan_bool = (np.roll(_ndf_x_nonan_all, i, axis=0) &  _ndf_y_nonan_all)
+            ndf_bool       = ndf_bool.astype(np.int8)
+            ndf_bool[ndf_eye] = -1
+            ndf_bool[~ndf_nonan_bool] = -1
+            ndf_nonan_bool[ndf_eye] = False
+            ndf_diff = (ndf_bool == 1).sum(axis=-1).sum(axis=-1) - (ndf_bool == 0).sum(axis=-1).sum(axis=-1)
+            ndf_n    = ndf_nonan_bool.sum(axis=-1).sum(axis=-1)
+            ndf_diff = ndf_diff / ndf_n
+            ndf_diff = np.nan_to_num(ndf_diff, nan=float("nan"), posinf=float("nan"), neginf=float("nan"))
+            ndf_diff[ndf_n < min_n] = float("nan")
+            _isnan    = ~np.isnan(ndf_diff)
+            _ndf_eye = np.roll(ndf_eye_corr, i, 1)
+            ndf_corr_n[_ndf_eye] += np.roll(_isnan,    -i, 0)
+            ndf_diff[~_isnan] = 0
+            ndf_corr[  _ndf_eye] += np.roll(ndf_diff, -i, 0)
+    ndf_corr = ndf_corr / ndf_corr_n
+    logger.info("END")
+    return ndf_corr
+
+def get_features_by_correlation(
+    df: pd.DataFrame, dtype: str="float16", is_gpu: bool=False, 
+    corr_type: str="pearson", batch_size: int=100, min_n: int=10, n_jobs: int=1,
+    **kwargs
+) -> pd.DataFrame:
     logger.info("START")
     assert isinstance(df, pd.DataFrame)
-    assert isinstance(cutoff, float) and 0.0 < cutoff <= 1.0
     assert isinstance(is_gpu, bool)
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(corr_type, str) and corr_type in ["pearson", "spearman", "kendall"]
     assert isinstance(min_n,      int) and min_n > 0
     assert isinstance(batch_size, int) and batch_size >= 0
     assert isinstance(n_jobs,     int) and n_jobs >= 1
@@ -315,97 +461,177 @@ def get_features_by_correlation(df: pd.DataFrame, cutoff: float=0.9, is_gpu: boo
         batch = [np.arange(df.shape[1])]
     else:
         batch = np.array_split(np.arange(df.shape[1]), df.shape[1] // batch_size)
+    df = astype_faster(df.copy(), list_astype=[{"from": None, "to": getattr(np, dtype)}], batch_size=10, n_jobs=n_jobs)
+    if corr_type == "spearman":
+        df = parallel_apply(
+            df.copy(), lambda x: x.rank(method="average"), axis=0, 
+            func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], 
+            batch_size=10, n_jobs=n_jobs
+        )
     if is_gpu:
+        n_iter = int(((len(batch) ** 2 - len(batch)) / 2) + len(batch))
+        i_iter = 0
         for i, batch_x in enumerate(batch):
             for batch_y in batch[i:]:
-                input_x, input_y = df.iloc[:, batch_x], df.iloc[:, batch_y]
-                input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
-                ndf_corr = corr_coef_pearson_gpu_2array(input_x, input_y, _dtype=getattr(torch, dtype), min_n=min_n)
+                i_iter += 1
+                logger.info(f"iter: {i_iter} / {n_iter}")
+                df_x, df_y = df.iloc[:, batch_x], df.iloc[:, batch_y]
+                input_x, input_y = df_x.values, df_y.values
+                if corr_type == "pearson":
+                    ndf_corr = corr_coef_pearson_2array(input_x, input_y, dtype=dtype, min_n=min_n, is_gpu=is_gpu)
+                elif corr_type == "spearman":
+                    ndf_corr = corr_coef_spearman_2array(df_x, df_y, is_to_rank=False, dtype=dtype, min_n=min_n, is_gpu=is_gpu)
+                elif corr_type == "kendall":
+                    dictwk = {x:y for x, y in kwargs.items() if x in ["n_sample", "n_iter"]}
+                    ndf_corr = corr_coef_kendall_2array(input_x, input_y, dtype=dtype, min_n=min_n, is_gpu=is_gpu, **dictwk)
                 df_corr.iloc[batch_x, batch_y] = ndf_corr
     else:
-        def work(input_x, input_y, dtype, min_n):
-            input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
-            ndf_corr = corr_coef_pearson_cpu_2array(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
-            return ndf_corr
-        list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
-            delayed(lambda x, y, z: (z, work(x, y, dtype, min_n)))(df.iloc[:, batch_x], df.iloc[:, batch_y], (batch_x, batch_y))
-            for i, batch_x in enumerate(batch) for batch_y in batch[i:]
-        ])
+        if corr_type == "pearson":
+            def work(input_x, input_y, dtype, min_n):
+                input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
+                ndf_corr = corr_coef_pearson_2array_numpy(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
+                return ndf_corr
+            list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
+                delayed(lambda x, y, z: (z, work(x, y, dtype, min_n)))(df.iloc[:, batch_x], df.iloc[:, batch_y], (batch_x, batch_y))
+                for i, batch_x in enumerate(batch) for batch_y in batch[i:]
+            ])
+        else:
+            logger.raise_error(f"corr_type: {corr_type} is not supported with CPU")
         for (batch_x, batch_y), ndf_corr in list_obj:
             df_corr.iloc[batch_x, batch_y] = ndf_corr
     logger.info("END")
     return df_corr
 
+def get_sklearn_trees_model_info(model) -> pd.DataFrame:
+    logger.info("START")
+    df = pd.DataFrame(np.concatenate([x.tree_.feature  for x in model.estimators_]), columns=["i_feature"])
+    df["n_sample"]       = np.concatenate([x.tree_.n_node_samples                         for x in model.estimators_])
+    df["n_sample_left"]  = np.concatenate([x.tree_.n_node_samples[x.tree_.children_left]  for x in model.estimators_])
+    df["n_sample_right"] = np.concatenate([x.tree_.n_node_samples[x.tree_.children_right] for x in model.estimators_])
+    df["impurity"]       = np.concatenate([x.tree_.impurity                         for x in model.estimators_])
+    df["impurity_left"]  = np.concatenate([x.tree_.impurity[x.tree_.children_left]  for x in model.estimators_])
+    df["impurity_right"] = np.concatenate([x.tree_.impurity[x.tree_.children_right] for x in model.estimators_])
+    df["importance"]     = df["impurity"] * df["n_sample"] - ((df["impurity_left"] * df["n_sample_left"]) + (df["impurity_right"] * df["n_sample_right"]))
+    df = df.loc[df["i_feature"] >= 0]
+    logger.info("END")
+    return df
+
 def get_features_by_randomtree_importance(
     df: pd.DataFrame, columns_exp: List[str], columns_ans: str, 
-    is_reg: bool=False, n_estimators: int=100, cnt_thre: int=40, n_jobs: int=1
+    is_reg: bool=False, max_iter: int=1, min_count: int=100, n_jobs: int=1, 
+    **kwargs
 ) -> pd.DataFrame:
     logger.info("START")
     assert isinstance(df, pd.DataFrame)
     assert check_type_list(columns_exp, str)
     assert isinstance(columns_ans, str)
-    assert check_type_list(columns_ans, str)
     assert isinstance(is_reg, bool)
+    # row
     regproc_df = RegistryProc(n_jobs=n_jobs)
     regproc_df.register("ProcDropNa", columns_ans)
     if not is_reg: regproc_df.register("ProcCondition", f"{columns_ans} >= 0")
     df = regproc_df.fit(df[columns_exp + [columns_ans]])
+    # columns explain
     regproc_exp = RegistryProc(n_jobs=n_jobs)
-    regproc_exp.register("ProcAsType", np.float32, batch_size=10)
+    regproc_exp.register("ProcAsType", np.float32, batch_size=25)
     regproc_exp.register("ProcToValues")
+    regproc_exp.register("ProcReplaceInf", posinf=float("nan"), neginf=float("nan"))
     regproc_exp.register("ProcFillNaMinMax")
     regproc_exp.register("ProcFillNa", 0)
     ndf_x = regproc_exp.fit(df[columns_exp])
-    regproc_ans = RegistryProc(n_jobs=1)
+    # columns answer
+    regproc_ans = RegistryProc(n_jobs=n_jobs)
     if is_reg: regproc_ans.register("ProcAsType", np.float32)
     else:      regproc_ans.register("ProcAsType", np.int32)
+    regproc_ans.register("ProcToValues")
     regproc_ans.register("ProcReshape", (-1, ))
-    ndf_y = regproc_exp.fit(df[[columns_ans]])
-    logger.info(f"columns_exp: {columns_exp}\ninput:{ndf_x.shape}\ncolumns_ans: {columns_ans}, answer:{ndf_y.shape}")
-    df_features_cnt = pd.DataFrame(columns=columns_exp)
-    df_features_imp = pd.DataFrame(columns=columns_exp)
+    ndf_y = regproc_ans.fit(df[[columns_ans]])
+    logger.info(f"\ncolumns_exp: {columns_exp[:10]}\ninput:{ndf_x.shape}\ncolumns_ans: {columns_ans}, target:{ndf_y.shape}")
+    se_cnt = pd.Series(0, index=np.arange(len(columns_exp)), dtype=float, name="count")
+    se_imp = pd.Series(0, index=np.arange(len(columns_exp)), dtype=float, name="importance")
     i = 0
-    while(True):
-        i += 1
-        logger.info("create forest. loop:%s", i)
-        # モデルの定義(木の数はとりあえず100固定)
-        model = None
-        dictwk = {"bootstrap":False, "n_estimators":n_estimators, "max_depth":10, "max_features":"auto", "verbose":3, "random_state":i, "n_jobs": n_jobs}
-        if is_reg: model = ExtraTreesRegressor(**dictwk)
+    for i in range(max_iter):
+        logger.info(f"create forest. loop: {i}, cnt: {se_cnt.median()}, max: {se_cnt.max()}")
+        dictwk = {
+            "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto",
+            "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state":i, "n_jobs": n_jobs
+        }
+        for x, y in kwargs.items():
+            if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion"]: dictwk[x] = y        
+        if is_reg: model = ExtraTreesRegressor( **dictwk)
         else:      model = ExtraTreesClassifier(**dictwk)
+        if i == 0: logger.info(f"model: {model}")
         model.fit(ndf_x, ndf_y)
-        ## model内で特徴量を使用した回数をカウントする
-        feature_count = np.hstack(list(map(lambda y: y.tree_.feature, model.estimators_)))
-        feature_count = feature_count[feature_count >= 0] #-1以下は子がないとか特別の意味を持つ
-        sewk = pd.DataFrame(colname_explain[feature_count], columns=[0]).groupby(0).size()
-        df_features_cnt = df_features_cnt.append(sewk, ignore_index=True)
-
-        ## modelの重要度を格納する
-        sewk = pd.Series(model.feature_importances_, index=df_features_imp.columns.values.copy())
-        df_features_imp = df_features_imp.append(sewk, ignore_index=True)
-
-        logger.debug("\n%s", df_features_cnt)
-        logger.debug("\n%s", df_features_imp)
-
-        ## カウントが一定数達した場合に終了する
-        ## ※例えば、ほとんどがnanのデータは分岐できる点が少ないためカウントが少なくなる
-        cnt = df_features_cnt.sum(axis=0).median() #各特長量毎の合計の中央値
-        logger.info("count median:%s", cnt)
-        if cnt >= cnt_thre:
-            break
-
-    # 特徴量計算
-    ## カウントがnanの箇所は、重要度もnanで置き換える(変換はndfを通して参照形式で行う)
-    ## カウントが無ければnan. 重要度は、カウントがなければ0
-    ndf_cnt = df_features_cnt.values.astype(np.float32)
-    ndf_imp = df_features_imp.values.astype(np.float32)
-    ndf_imp[np.isnan(ndf_cnt)] = np.nan #木の分岐にはあるが重要度として0がカウントする可能性も考慮して
-    ## 重要度の計算
-    df_features = df_features_imp.mean().reset_index().copy()
-    df_features.columns  = ["feature_name","importance"]
-    df_features["std"]   = df_features_imp.std().values #カラム順を変えていないので、joinしなくても良いはず
-    df_features["count"] = df_features_cnt.sum().values
-    df_features = df_features.sort_values("importance", ascending=False)
-
+        dfwk    = get_sklearn_trees_model_info(model)
+        se_cnt += dfwk.groupby("i_feature").size()
+        se_imp += dfwk.groupby("i_feature")["importance"].sum()
+        if se_cnt.median() >= min_count: break
+    df_feadtures = pd.concat([se_cnt, se_imp], axis=1, ignore_index=False, sort=False)
+    df_feadtures.index = columns_exp
+    df_feadtures["ratio"] = (df_feadtures["importance"] / df_feadtures["count"])
     logger.info("END")
-    return df_features
+    return df_feadtures
+
+def get_features_by_adversarial_validation(
+    df_train: pd.DataFrame, df_test: pd.DataFrame, columns_exp: List[str], columns_ans: str=None,
+    n_split: int=5, n_cv: int=5, n_jobs: int=1, **kwargs
+):
+    logger.info("START")
+    assert isinstance(df_train, pd.DataFrame)
+    assert isinstance(df_test,  pd.DataFrame)
+    assert check_type_list(columns_exp, str)
+    assert columns_ans is None or isinstance(columns_ans, str)
+    if columns_ans is not None: columns_exp = columns_exp + [columns_ans]
+    assert isinstance(n_split, int) and n_split >= 2
+    assert isinstance(n_cv,    int) and n_cv    >= 1
+    # row
+    index_df = np.concatenate([df_train.index.values, df_test.index.values])
+    # columns explain
+    regproc_exp = RegistryProc(n_jobs=n_jobs)
+    regproc_exp.register("ProcAsType", np.float32, batch_size=25)
+    regproc_exp.register("ProcToValues")
+    regproc_exp.register("ProcReplaceInf", posinf=float("nan"), neginf=float("nan"))
+    regproc_exp.register("ProcFillNaMinMax")
+    regproc_exp.register("ProcFillNa", 0)
+    ndf_x1 = regproc_exp.fit(df_train[columns_exp].copy())
+    ndf_x2 = regproc_exp(df_test[columns_exp].copy())
+    ndf_x  = np.concatenate([ndf_x1, ndf_x2], axis=0)
+    # columns answer
+    ndf_y = np.concatenate([np.zeros(df_train.shape[0]), np.ones(df_test.shape[0])]).astype(int)
+    logger.info(f"input: {ndf_x.shape}, target: {ndf_y.shape}")
+    # model
+    dictwk = {
+        "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto",
+        "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state": 0, "n_jobs": n_jobs
+    }
+    for x, y in kwargs.items():
+        if x in [
+            "bootstrap", "n_estimators", "max_depth", "max_features", "verbose", 
+            "min_samples_split", "criterion", "random_state"
+        ]: dictwk[x] = y
+    model = RandomForestClassifier(**dictwk)
+    logger.info(f"model: {model}")
+    # cross validation
+    df_imp, df_pred = pd.DataFrame(), pd.DataFrame()
+    for i_cv, (index_train, index_test) in enumerate(StratifiedKFold(n_splits=n_split).split(np.arange(ndf_x.shape[0], dtype=int), ndf_y)):
+        logger.info(f"cross validation: {i_cv}")
+        model.fit(ndf_x[index_train].copy(), ndf_y[index_train].copy())
+        df_imp    = pd.concat([df_imp, get_sklearn_trees_model_info(model)], axis=0, ignore_index=True, sort=False)
+        ndf_pred  = model.predict_proba(ndf_x[index_test])
+        dfwk_pred = pd.DataFrame(np.argmax(ndf_pred, axis=1), columns=["predict"])
+        dfwk_pred[[f"predict_proba_{i}" for i in range(ndf_pred.shape[-1])]] = ndf_pred
+        dfwk_pred["answer"] = ndf_y[index_test]
+        dfwk_pred["i_cv"]   = i_cv
+        dfwk_pred["index"]  = index_df[index_test]
+        df_pred = pd.concat([df_pred, dfwk_pred], axis=0, ignore_index=True, sort=False)
+        if (n_cv - 1) <= i_cv: break
+    df_adv = pd.DataFrame(index=np.arange(len(columns_exp)))
+    df_adv["count"]      = df_imp.groupby("i_feature").size()
+    df_adv["importance"] = df_imp.groupby("i_feature")["importance"].sum()
+    df_adv["ratio"]      = (df_adv["importance"] / df_adv["count"])
+    df_adv.index = columns_exp
+    val_auc = roc_auc_score( df_pred["answer"].values, df_pred["predict_proba_1"].values)
+    val_acc = accuracy_score(df_pred["answer"].values, df_pred["predict"].values)
+    logger.info(f"roc_auc: {val_auc}, accuracy: {val_acc}")
+    logger.info("END")
+    return df_adv, df_pred

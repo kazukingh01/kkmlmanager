@@ -1,11 +1,19 @@
+import os, shutil
 from typing import List, Union
 
 
 __all__ = [
+    "makedirs",
     "check_type",
     "check_type_list",
+    "correct_dirpath",
 ]
 
+
+def makedirs(dirpath: str, exist_ok: bool = False, remake: bool = False):
+    dirpath = correct_dirpath(dirpath)
+    if remake and os.path.isdir(dirpath): shutil.rmtree(dirpath)
+    os.makedirs(dirpath, exist_ok = exist_ok)
 
 def check_type(instance: object, _type: Union[object, List[object]]):
     _type = [_type] if not (isinstance(_type, list) or isinstance(_type, tuple)) else _type
@@ -37,3 +45,9 @@ def check_type_list(instances: List[object], _type: Union[object, List[object]],
         return True
     else:
         return check_type(instances, _type)
+
+def correct_dirpath(dirpath: str) -> str:
+    if os.name == "nt":
+        return dirpath if dirpath[-1] == "\\" else (dirpath + "\\")
+    else:
+        return dirpath if dirpath[-1] == "/" else (dirpath + "/")
