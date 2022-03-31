@@ -64,6 +64,7 @@ class RegistryProc(object):
     
     def __call__(self, input: Union[pd.DataFrame, np.ndarray]):
         logger.info("START")
+        assert self.is_fit
         assert check_type(input, [pd.DataFrame, np.ndarray])
         if isinstance(input, pd.DataFrame):
             assert input.columns.isin(self.shape).sum() == self.shape.shape[0]

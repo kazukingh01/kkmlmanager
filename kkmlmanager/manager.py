@@ -7,6 +7,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.metrics import roc_curve, auc
 
 # local package
+from kkmlmanager.regproc import RegistryProc
 from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
@@ -58,6 +59,9 @@ class MLManager:
         self.is_fit       = False
         self.columns_hist = [self.columns_exp.copy(), ]
         self.columns      = self.columns_exp.copy()
+        self.proc_row     = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_exp     = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_ans     = RegistryProc(n_jobs=self.n_jobs)
         self.logger.info("END")
 
     def set_model(self, model, *args, **kwargs):
@@ -210,50 +214,79 @@ class MLManager:
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
         ]
     ):
+        self.logger.info("START")
         for proc in list_proc:
             eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test})
-
-    def eval_model(self, df_score, **eval_params) -> (pd.DataFrame, pd.Series, ):
-        """
-        回帰や分類を意識せずに評価値を出力する
-        """
-        df_conf, se_eval = pd.DataFrame(), pd.Series(dtype=object)
-        if self.is_classification_model():
-            df_conf, se_eval = eval_classification_model(df_score, "answer", "predict", ["predict_proba_"+str(int(_x)) for _x in self.model.classes_], labels=self.model.classes_, **eval_params)
-        else:
-            df_conf, se_eval = eval_regressor_model(     df_score, "answer", "predict", **eval_params)
-        return df_conf, se_eval
-
+        self.logger.info("END")
+    
+    def proc_registry(
+        self, dict_proc: dict={
+            "row": [],
+            "exp": [
+                '"ProcAsType", np.float32, batch_size=25', 
+                '"ProcToValues"', 
+                'ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
+            ],
+            "ans": [
+                '"ProcAsType", np.int32',
+                '"ProcToValues"',
+                '"ProcReshape", (-1, )',
+            ]
+        }
+    ):
+        self.logger.info("START")
+        assert isinstance(dict_proc, dict)
+        for x, y in dict_proc.items():
+            assert x in ["row", "exp", "ans"]
+            assert check_type_list(y, str)
+        self.proc_row = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_exp = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_ans = RegistryProc(n_jobs=self.n_jobs)
+        for _type in ["row", "exp", "ans"]:
+            if _type in dict_proc:
+                for x in dict_proc[_type]:
+                    eval(f"self.proc_{_type}.register({x})", {}, {"self": self, "np": np, "pd": pd})
+        self.logger.info("END")
+    
+    def proc_fit(self, df: pd.DataFrame):
+        self.logger.info("START")
+        df       = df[self.columns.tolist() + self.columns_ans.tolist()].copy()
+        df       = self.proc_row.fit(df)
+        output_x = self.proc_exp.fit(df[self.columns])
+        output_y = self.proc_ans.fit(df[self.columns_ans])
+        self.logger.info("END")
+        return output_x, output_y
+    
+    def proc_call(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
+        self.logger.info("START")
+        assert isinstance(is_row, bool)
+        assert isinstance(is_exp, bool)
+        assert isinstance(is_ans, bool)
+        if is_row:
+            df = self.proc_row(df)
+        output_x = self.proc_exp(df) if is_exp else None
+        output_y = self.proc_ans(df) if is_ans else None
+        self.logger.info("END")
+        return output_x, output_y
 
     def fit(
-            self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, 
-            fit_params: dict={}, eval_params: dict={"n_round":3, "eval_auc_dict":{}}, 
-            pred_params: dict={"do_estimators":False}, is_preproc_fit: bool=True, 
-            is_pred_train: bool=True, is_pred_valid: bool=True
-        ):
-        """
-        モデルのfit関数. fitだけでなく、評価値や重要度も格納する.
-        Params::
-            df_train: 訓練データ
-            df_valid: 検証データ
-            fit_params:
-                fit 時の追加のparameter を渡す事ができる. 特殊文字列として_validation_x, _validation_y があり、
-                これは交差検証時のvalidation dataをその文字列と変換して渡す事ができる
-                {"eval_set":[("_validation_x", "_validation_y")], "early_stopping_rounds":50}
-            eval_params:
-                評価時のparameter. {"n_round":3, "eval_auc_list":{}}
-                eval_classification_model など参照
-            pred_params:
-                predict_detail など参照
-            is_preproc_fit: preproc.fit を事前に df_train で行うかどうか
-            is_pred_train: train の predict を保存するかどうか（サイズが大きくなるので）
-            is_pred_valid: valid の predict を保存するかどうか（サイズが大きくなるので）
-        """
+        self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
+        fit_params: dict={}, eval_params: dict={"n_round":3, "eval_auc_dict":{}}, 
+        pred_params: dict={"do_estimators":False}, is_preproc_fit: bool=True, 
+        is_pred_train: bool=True, is_pred_valid: bool=True
+    ):
         self.logger.info("START")
-        self.logger.info(f"df shape:{df_train.shape}, fit_params:{fit_params}, eval_params:{eval_params}")
-        self.logger.info(f"features:{self.colname_explain.shape}")
+        assert isinstance(df_train, pd.DataFrame)
+        if df_valid is None: assert isinstance(df_valid, pd.DataFrame)
+        assert isinstance(is_proc_fit, bool)
+        # pre proc
+        if is_proc_fit:
+            self.proc_fit(df_train)
+        train_x, train_y = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
+        valid_x, valid_y = None, None
+        if df_valid is not None:
+            valid_x, valid_y = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
         if self.model is None: self.logger.raise_error("model is not set.")
-
         fit_params  = fit_params. copy() if fit_params  is not None else {}
         eval_params = eval_params.copy() if eval_params is not None else {}
         pred_params = pred_params.copy() if pred_params is not None else {}
