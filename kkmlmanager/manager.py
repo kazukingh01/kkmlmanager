@@ -115,12 +115,13 @@ class MLManager:
         assert df is None or isinstance(df, pd.DataFrame)
         assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
         assert isinstance(sample_size, int) and sample_size > 0
-        df = df.iloc[np.random.permutation(np.arange(df.shape[0]))[:sample_size], :].copy()
+        if df is not None:
+            df = df.iloc[np.random.permutation(np.arange(df.shape[0]))[:sample_size], :].loc[:, self.columns].copy()
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, dtype: {dtype}, is_gpu: {is_gpu}, corr_type: {corr_type}")
         attr_name = f"features_corr_{corr_type}"
         if df is not None:
             df_corr = get_features_by_correlation(
-                df[self.columns], dtype=dtype, is_gpu=is_gpu, corr_type=corr_type, 
+                df, dtype=dtype, is_gpu=is_gpu, corr_type=corr_type, 
                 batch_size=batch_size, min_n=min_n, n_jobs=self.n_jobs, **kwargs
             )
             for i in range(df_corr.shape[0]): df_corr.iloc[i:, i] = float("nan")

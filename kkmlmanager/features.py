@@ -308,9 +308,13 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
         df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
         df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
     input_x, input_y = df_x.values, df_y.values
-    assert input_x.shape == input_y.shape
+    assert len(input_x.shape) == len(input_y.shape) == 2
+    assert input_x.shape[0] == input_y.shape[0]
+    assert input_x.shape[1] >= input_y.shape[1]
     tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
-    tens_y       = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y_tmp   = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y       = torch.zeros_like(tens_x, dtype=getattr(torch, dtype), device=device)
+    tens_y[:, :tens_y_tmp.shape[1]] = tens_y_tmp
     tens_x_nonan = ~torch.isnan(tens_x)
     tens_y_nonan = ~torch.isnan(tens_y)
     tens_x       = tens_x / tens_x_nonan.sum(dim=0)
@@ -330,21 +334,25 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
     tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
     tens_corr[tens_nonan < min_n] = float("nan")
     logger.info("END")
-    return tens_corr.cpu().numpy()
+    return tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
 
 def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", n_sample: int=1000, n_iter: int=1, min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     logger.info("START")
     device = "cuda:0" if is_gpu else "cpu"
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
-    assert input_x.shape == input_y.shape
+    assert len(input_x.shape) == len(input_y.shape) == 2
+    assert input_x.shape[0] == input_y.shape[0]
+    assert input_x.shape[1] >= input_y.shape[1]
     assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
     assert isinstance(min_n, int) and min_n >= 0
     assert isinstance(is_gpu, bool)
     if not is_gpu: logger.warning("Note that the calculation is 'very SLOW'.")
     device        = "cuda:0" if is_gpu else "cpu"
     tens_x        = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
-    tens_y        = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y_tmp    = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y        = torch.zeros_like(tens_x, dtype=getattr(torch, dtype), device=device)
+    tens_y[:, :tens_y_tmp.shape[1]] = tens_y_tmp
     tens_x_nonan  = ~torch.isnan(tens_x)
     tens_y_nonan  = ~torch.isnan(tens_y)
     n_sample      = min(n_sample, tens_x.shape[0])
@@ -386,7 +394,7 @@ def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: st
         tens_diff[~_isnan] = 0
         tens_corr   += tens_diff
     tens_corr = tens_corr / tens_corr_n
-    tens_corr = tens_corr.cpu().numpy()
+    tens_corr = tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
     tens_corr = np.nan_to_num(tens_corr, nan=float("nan"), posinf=float("nan"), neginf=float("nan"))
     logger.info("END")
     return tens_corr
