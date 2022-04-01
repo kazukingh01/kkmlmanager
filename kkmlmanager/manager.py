@@ -62,6 +62,7 @@ class MLManager:
         self.proc_row     = RegistryProc(n_jobs=self.n_jobs)
         self.proc_exp     = RegistryProc(n_jobs=self.n_jobs)
         self.proc_ans     = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_check_init()
         self.logger.info("END")
 
     def set_model(self, model, *args, **kwargs):
@@ -262,12 +263,20 @@ class MLManager:
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
         if is_row:
-            self.proc_row.check_proc(False)
             df = self.proc_row(df)
         output_x = self.proc_exp(df) if is_exp else None
         output_y = self.proc_ans(df) if is_ans else None
         self.logger.info("END")
         return output_x, output_y
+
+    def proc_check_init(self)
+        self.logger.info("START")
+        self.proc_row.check_proc(False)
+        self.proc_exp.check_proc(False)
+        self.proc_exp.is_check = True
+        self.proc_ans.check_proc(False)
+        self.proc_ans.is_check = True
+        self.logger.info("END")
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
