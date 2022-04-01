@@ -24,15 +24,17 @@ class RegistryProc(object):
         assert isinstance(n_jobs, int) and n_jobs >= 1
         super().__init__()
         self.procs: List[BaseProc] = []
-        self.n_jobs = n_jobs
+        self.n_jobs   = n_jobs
         self.initialize()
     
     def __str__(self):
         return str([str(x) for x in self.procs])
 
     def initialize(self):
-        self.is_fit = False
-        self.shape  = None
+        self.is_fit   = False
+        self.is_check = True
+        self.shape    = None
+        self.check_proc(self.is_check)
     
     def register(self, proc: Union[str, BaseProc], *args, **kwargs):
         if isinstance(proc, str):
@@ -44,6 +46,7 @@ class RegistryProc(object):
 
     def check_proc(self, is_check: bool):
         assert isinstance(is_check, bool)
+        self.is_check = is_check
         for proc in self.procs:
             proc.is_check = is_check
     
@@ -70,10 +73,14 @@ class RegistryProc(object):
         assert self.is_fit
         assert check_type(input, [pd.DataFrame, np.ndarray])
         if isinstance(input, pd.DataFrame):
-            assert input.columns.isin(self.shape).sum() == self.shape.shape[0]
-            output = input.loc[:, self.shape].copy()
+            if self.is_check:
+                assert input.columns.isin(self.shape).sum() == self.shape.shape[0]
+                output = input.loc[:, self.shape].copy()
+            else:
+                output = input.copy()
         else:
-            assert input.shape[1:] == self.shape
+            if self.is_check:
+                assert input.shape[1:] == self.shape
             output = input
         logger.info(f"input: {__class__.info_value(output)}")
         for proc in self.procs:

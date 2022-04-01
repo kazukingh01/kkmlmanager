@@ -262,7 +262,9 @@ class MLManager:
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
         if is_row:
+            self.proc_row.check_proc(False)
             df = self.proc_row(df)
+            self.proc_row.check_proc(True)
         output_x = self.proc_exp(df) if is_exp else None
         output_y = self.proc_ans(df) if is_ans else None
         self.logger.info("END")
