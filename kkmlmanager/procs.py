@@ -37,8 +37,7 @@ class BaseProc:
         self.is_check = False
         self.is_fit   = False
         self.is_df    = False
-        self.n_jobs   = n_jobs
-    
+        self.n_jobs   = n_jobs    
     def fit(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
         assert check_type(input, [pd.DataFrame, np.ndarray])
         self.is_df = isinstance(input, pd.DataFrame)
@@ -52,7 +51,6 @@ class BaseProc:
         if is_df: self.shape_out = output.columns.copy()
         else:     self.shape_out = output.shape[1:]
         return output
-    
     def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
         if not self.is_fit: raise Exception("You must use 'fit' first.")
         if self.is_check:

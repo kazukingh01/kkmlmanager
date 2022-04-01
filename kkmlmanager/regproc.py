@@ -27,6 +27,9 @@ class RegistryProc(object):
         self.n_jobs = n_jobs
         self.initialize()
     
+    def __str__(self):
+        return str([str(x) for x in self.procs])
+
     def initialize(self):
         self.is_fit = False
         self.shape  = None

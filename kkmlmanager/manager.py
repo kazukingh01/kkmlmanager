@@ -66,7 +66,6 @@ class MLManager:
 
     def set_model(self, model, *args, **kwargs):
         self.logger.info("START")
-        self.initialize()
         self.model        = model(*args, **kwargs)
         self.model_args   = args
         self.model_kwargs = kwargs
