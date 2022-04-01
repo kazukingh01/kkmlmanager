@@ -246,6 +246,7 @@ class MLManager:
             if _type in dict_proc:
                 for x in dict_proc[_type]:
                     eval(f"self.proc_{_type}.register({x})", {}, {"self": self, "np": np, "pd": pd})
+        self.proc_check_init()
         self.logger.info("END")
     
     def proc_fit(self, df: pd.DataFrame):
@@ -289,8 +290,9 @@ class MLManager:
         assert check_type(params_fit, [str, dict])
         # pre proc
         if is_proc_fit:
-            self.proc_fit(df_train)
-        train_x, train_y = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
+            train_x, train_y = self.proc_fit(df_train)
+        else:
+            train_x, train_y = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
         valid_x, valid_y = None, None
         if df_valid is not None:
             valid_x, valid_y = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
