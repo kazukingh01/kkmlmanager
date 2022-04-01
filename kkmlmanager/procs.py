@@ -54,12 +54,18 @@ class BaseProc:
     def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
         if not self.is_fit: raise Exception("You must use 'fit' first.")
         if self.is_check:
-            if self.is_df: assert self.shape_in == input.columns
-            else:          assert self.shape_in == input.shape[1:]
+            if self.is_df:
+                assert len(self.shape_in) == len(input.columns)
+                assert np.all(self.shape_in == input.columns)
+            else:
+                assert self.shape_in == input.shape[1:]
         output = self.call_main(input, *args, **kwargs)
         if self.is_check:
-            if self.is_df: assert self.shape_out == output.columns
-            else:          assert self.shape_out == output.shape[1:]
+            if self.is_df:
+                assert len(self.shape_out) == len(output.columns)
+                assert np.all(self.shape_out == output.columns)
+            else:
+                assert self.shape_out == output.shape[1:]
         return output
     def __str__(self):
         raise NotImplementedError()

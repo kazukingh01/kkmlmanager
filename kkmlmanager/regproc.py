@@ -32,7 +32,7 @@ class RegistryProc(object):
 
     def initialize(self):
         self.is_fit   = False
-        self.is_check = True
+        self.is_check = False
         self.shape    = None
         self.check_proc(self.is_check)
     
