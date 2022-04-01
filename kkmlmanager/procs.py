@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import List, Union
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, QuantileTransformer
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, QuantileTransformer, OneHotEncoder
 from sklearn.decomposition import PCA
 
 # local package
@@ -17,6 +17,7 @@ __all__ = [
     "ProcStandardScaler",
     "ProcRankGauss",
     "ProcPCA",
+    "ProcOneHotEncoder",
     "ProcFillNa",
     "ProcFillNaMinMax",
     "ProcReplaceValue",
@@ -95,6 +96,14 @@ class ProcRankGauss(ProcSKLearn):
 class ProcPCA(ProcSKLearn):
     def __init__(self, *args, **kwargs):
         super().__init__(PCA, *args, **kwargs)
+
+class ProcOneHotEncoder(ProcSKLearn):
+    def __init__(self, *args, **kwargs):
+        super().__init__(OneHotEncoder, *args, **kwargs)
+    def fit_main(self, input):
+        return self.proc.fit_transform(input).toarray()
+    def call_main(self, input):
+        return self.proc.transform(input).toarray()
 
 class ProcFillNa(BaseProc):
     def __init__(self, fill_value: Union[str, int, float], **kwargs):

@@ -1,4 +1,4 @@
-import sys, pickle, os
+import sys, pickle, os, copy
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -225,7 +225,7 @@ class MLManager:
             "exp": [
                 '"ProcAsType", np.float32, batch_size=25', 
                 '"ProcToValues"', 
-                'ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
+                '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
             ],
             "ans": [
                 '"ProcAsType", np.int32',
@@ -271,14 +271,13 @@ class MLManager:
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
-        fit_params: dict={}, eval_params: dict={"n_round":3, "eval_auc_dict":{}}, 
-        pred_params: dict={"do_estimators":False}, is_preproc_fit: bool=True, 
-        is_pred_train: bool=True, is_pred_valid: bool=True
+        params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={},
     ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         if df_valid is None: assert isinstance(df_valid, pd.DataFrame)
         assert isinstance(is_proc_fit, bool)
+        assert check_type(params_fit, [str, dict])
         # pre proc
         if is_proc_fit:
             self.proc_fit(df_train)
@@ -287,66 +286,15 @@ class MLManager:
         if df_valid is not None:
             valid_x, valid_y = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
         if self.model is None: self.logger.raise_error("model is not set.")
-        fit_params  = fit_params. copy() if fit_params  is not None else {}
-        eval_params = eval_params.copy() if eval_params is not None else {}
-        pred_params = pred_params.copy() if pred_params is not None else {}
-
-        # 前処理
-        if is_preproc_fit: self.preproc.fit(df_train)
-        X_train, Y_train, index_train_df = self.preproc(df_train, autofix=True, ret_index=True)
-        X_valid, Y_valid, index_valid_df = None, None, None
-        if df_valid is not None: X_valid, Y_valid, index_valid_df = self.preproc(df_valid, autofix=True, ret_index=True)
-        fit_params = conv_validdata_in_fitparmas(fit_params.copy(), X_valid, Y_valid) # validation data set.
-        print(fit_params)
         # fit
-        self.logger.debug("create model by All samples : start ...")
-        self.model.fit(X_train, Y_train, **fit_params)
-        self.logger.debug("create model by All samples : end ...")
-        # 情報の保存
-        if len(Y_train.shape) == 1 and Y_train.dtype in [np.int8, np.int16, np.int32, np.int64]:
-            sewk = pd.DataFrame(Y_train).groupby(0).size().sort_index()
-            if is_callable(self.model, "classes_") == False:
-                ## classes_ がない場合は手動で追加する
-                self.model.classes_ = np.sort(np.unique(Y_train)).astype(int)
-            self.n_trained_samples = {int(x):sewk[int(x)] for x in self.model.classes_}
-
-        # 精度の記録
-        pred_params["n_jobs"] = self.n_jobs
-        ## 訓練データ
-        df_score = predict_detail(self.model, X_train, y=Y_train, **pred_params)
-        df_score["index"]  = index_train_df.copy()
-        for x in self.colname_other: df_score["other_"+x] = df_train.loc[:, x].copy().values
-        self.index_train   = index_train_df.copy() # DataFrame のインデックスを残しておく
-        if is_pred_train: self.df_pred_train = df_score.copy()
-        if df_score.columns.isin(["predict", "answer"]).sum() == 2:
-            df_conf, se_eval = self.eval_model(df_score, **eval_params)
-            self.logger.info("evaluation model by train data.")
-            self.df_cm_train   = df_conf.copy()
-            self.se_eval_train = se_eval.astype(str).copy()
-            self.logger.info(f'\n{self.df_cm_train}\n{self.se_eval_train}')
-        ## 検証データ
-        if df_valid is not None:
-            df_score = predict_detail(self.model, X_valid, y=Y_valid, **pred_params)
-            df_score["index"]  = index_valid_df.copy()
-            for x in self.colname_other: df_score["other_"+x] = df_valid.loc[:, x].copy().values
-            self.index_valid = index_valid_df.copy()
-            if is_pred_valid: self.df_pred_valid = df_score.copy()
-            if df_score.columns.isin(["predict", "answer"]).sum() == 2:
-                df_conf, se_eval = self.eval_model(df_score, **eval_params)
-                self.logger.info("evaluation model by train data.")
-                self.df_cm_valid  = df_conf.copy()
-                self.se_eval_valid = se_eval.astype(str).copy()
-                self.logger.info(f'\n{self.df_cm_valid}\n{self.se_eval_valid}')
-        
-        # 特徴量の重要度
-        self.logger.info("feature importance saving...")
-        if is_callable(self.model, "feature_importances_"):
-            if len(self.colname_explain) == len(self.model.feature_importances_):
-                _df = pd.DataFrame(np.array([self.colname_explain, self.model.feature_importances_]).T, columns=["feature_name","importance"])
-                _df = _df.sort_values(by="importance", ascending=False).reset_index(drop=True)
-                self.df_feature_importances = _df.copy()
-            else:
-                self.logger.warning("feature importance not saving...")
+        if isinstance(params_fit, str):
+            assert isinstance(params_fit_evaldict, dict)
+            params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
+            params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
+            params_fit = eval(params_fit, {}, params_fit_evaldict)
+        self.logger.info("fitting: start ...")
+        self.model.fit(train_x, train_y, **params_fit)
+        self.logger.info("fitting: end ...")
         self.is_model_fit = True
         self.logger.info("END")
 
