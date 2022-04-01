@@ -269,7 +269,7 @@ class MLManager:
         self.logger.info("END")
         return output_x, output_y
 
-    def proc_check_init(self)
+    def proc_check_init(self):
         self.logger.info("START")
         self.proc_row.check_proc(False)
         self.proc_exp.check_proc(False)
