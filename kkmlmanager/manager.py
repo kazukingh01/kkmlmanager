@@ -9,6 +9,7 @@ from sklearn.metrics import roc_curve, auc
 # local package
 from kkmlmanager.regproc import RegistryProc
 from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
+from kkmlmanager.eval import eval_model
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
 from kkmlmanager.util.logger import set_logger
@@ -281,13 +282,15 @@ class MLManager:
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
-        params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={},
+        params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False
     ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         if df_valid is None: assert isinstance(df_valid, pd.DataFrame)
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
+        assert isinstance(is_eval_train, bool)
+        is_reg = False if df_train[self.columns_ans].dtypes[0] in [int, np.int16, np.int32, np.int64] else True
         # pre proc
         if is_proc_fit:
             train_x, train_y = self.proc_fit(df_train)
@@ -303,10 +306,27 @@ class MLManager:
             params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
             params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
             params_fit = eval(params_fit, {}, params_fit_evaldict)
+        self.logger.info(f"model: {self.model}, is_reg: {is_reg}, fit params: {params_fit}")
         self.logger.info("fitting: start ...")
         self.model.fit(train_x, train_y, **params_fit)
         self.logger.info("fitting: end ...")
         self.is_model_fit = True
+        # eval
+        self.logger.info("evaluate model.")
+        if valid_x is not None:
+            self.logger.info("evaluate valid.")
+            se_eval, df_eval = eval_model(self.model, valid_x, valid_y, is_reg=is_reg)
+            self.eval_valid_se = se_eval.copy()
+            self.eval_valid_df = df_eval.copy()
+            for x in se_eval.index:
+                self.logger.info(f"{x}: {se_eval.loc[x]}")
+        if is_eval_train:
+            self.logger.info("evaluate train.")
+            se_eval, df_eval = eval_model(self.model, train_x, train_y, is_reg=is_reg)
+            self.eval_train_se = se_eval.copy()
+            self.eval_train_df = df_eval.copy()
+            for x in se_eval.index:
+                self.logger.info(f"{x}: {se_eval.loc[x]}")
         self.logger.info("END")
 
 
