@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, r2_score
 
 # local package
 from kkmlmanager.util.logger import set_logger
@@ -51,9 +51,18 @@ def eval_model(model, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=Fal
     df = predict_model(model, input_x)
     se = pd.Series(dtype=object)
     if is_reg:
-        pass
+        assert len(input_y.shape) == 1
+        df["answer"] = input_y
+        se["r2"]   = r2_score(input_y, df["predict"])
+        se["rmse"] = np.sqrt( ((input_y - df["predict"].values) ** 2).sum() / input_y.shape[0] )
+        se["mae"]  = (np.abs(input_y - df["predict"].values)).sum() / input_y.shape[0]
     else:
         assert len(input_y.shape) in [1,2]
+        if len(input_y.shape) == 1:
+            df["answer"] = input_y
+        else:
+            df["answer"] = np.argmax(input_y, axis=1)
+            df[[f"answer_{i}" for i in range(input_y.shape[1])]] = input_y
         n_class    = df.columns.str.contains("^predict_proba_", regex=True).sum()
         ndf_class  = model.classes_ if hasattr(model, "classes_") else np.arange(n_class)
         dict_class = {x:i for i, x in enumerate(ndf_class)}
@@ -62,6 +71,7 @@ def eval_model(model, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=Fal
             input_y = np.vectorize(lambda x: dict_class.get(x))(input_y.copy()).astype(int)
             input_y = np.eye(n_class)[input_y]
         assert ndf_pred.shape == input_y.shape
+        ndf_pred       = np.clip(ndf_pred, 1e-10, 1)
         input_y_class  = np.argmax(input_y, axis=1)
         input_y_argmax = np.zeros_like(input_y)
         input_y_argmax[np.arange(input_y_argmax.shape[0]), input_y_class] = 1

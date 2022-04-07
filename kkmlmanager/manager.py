@@ -3,13 +3,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from typing import List, Union
-from sklearn.calibration import calibration_curve
-from sklearn.metrics import roc_curve, auc
+from sklearn.model_selection import StratifiedKFold
 
 # local package
 from kkmlmanager.regproc import RegistryProc
 from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
 from kkmlmanager.eval import eval_model
+from kkmlmanager.calibration import Calibrater, calibration_curve_plot
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
 from kkmlmanager.util.logger import set_logger
@@ -26,23 +26,25 @@ class MLManager:
     def __init__(
         self,
         # model parameter
-        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_oth: List[str]=None,
+        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_otr: List[str]=None, is_reg: bool=False,
         # common parameter
         outdir: str="./output/", random_seed: int=1, n_jobs: int=1
     ):
         self.logger = set_logger(f"{__class__.__name__}.{id(self)}", internal_log=True)
         self.logger.info("START")
         if isinstance(columns_ans, str): columns_ans = [columns_ans, ]
-        if columns_oth is None: columns_oth = []
+        if columns_otr is None: columns_otr = []
         assert check_type_list(columns_exp, str)
         assert check_type_list(columns_ans, str)
-        assert check_type_list(columns_oth, str)
+        assert check_type_list(columns_otr, str)
+        assert isinstance(is_reg, bool)
         assert isinstance(outdir, str)
         assert isinstance(random_seed, int) and random_seed >= 0
         assert isinstance(n_jobs, int) and n_jobs >= 1
         self.columns_exp = np.array(columns_exp)
         self.columns_ans = np.array(columns_ans)
-        self.columns_oth = np.array(columns_oth)
+        self.columns_otr = np.array(columns_otr)
+        self.is_reg      = is_reg
         self.outdir      = correct_dirpath(outdir)
         self.random_seed = random_seed
         self.n_jobs      = n_jobs
@@ -50,14 +52,18 @@ class MLManager:
         self.logger.info("END")
 
     def __str__(self):
-        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_oth}"
+        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_otr}"
     
     def initialize(self):
         self.logger.info("START")
         self.model        = None
+        self.model_class  = None
         self.model_args   = None
         self.model_kwargs = None
+        self.calibrater   = None
         self.is_fit       = False
+        self.is_calib     = False
+        self.list_cv      = []
         self.columns_hist = [self.columns_exp.copy(), ]
         self.columns      = self.columns_exp.copy()
         self.proc_row     = RegistryProc(n_jobs=self.n_jobs)
@@ -68,10 +74,18 @@ class MLManager:
 
     def set_model(self, model, *args, **kwargs):
         self.logger.info("START")
-        self.model        = model(*args, **kwargs)
+        self.model_class  = model
         self.model_args   = args
         self.model_kwargs = kwargs
-        self.is_fit       = False
+        self.reset_model()
+        self.logger.info("END")
+    
+    def reset_model(self):
+        self.logger.info("START")
+        self.model      = self.model_class(*self.model_args, **self.model_kwargs)
+        self.calibrater = None
+        self.is_fit     = False
+        self.is_calib   = False
         self.logger.info("END")
 
     def update_features(self, features: Union[List[str], np.ndarray]):
@@ -119,6 +133,7 @@ class MLManager:
         self.logger.info("START")
         assert df is None or isinstance(df, pd.DataFrame)
         assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
+        if sample_size is None: sample_size = df.shape[0]
         assert isinstance(sample_size, int) and sample_size > 0
         if df is not None:
             df = df.iloc[np.random.permutation(np.arange(df.shape[0]))[:sample_size], :].loc[:, self.columns].copy()
@@ -155,9 +170,8 @@ class MLManager:
         assert len(self.columns_ans.shape) == 1
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, max_iter: {max_iter}, min_count: {min_count}")
         if df is not None:
-            is_reg = False if df[self.columns_ans].dtypes[0] in [int, np.int16, np.int32, np.int64] else True
             df_treeimp = get_features_by_randomtree_importance(
-                df, self.columns.tolist(), self.columns_ans[0], is_reg=is_reg, max_iter=max_iter, 
+                df, self.columns.tolist(), self.columns_ans[0], is_reg=self.is_reg, max_iter=max_iter, 
                 min_count=min_count, n_jobs=self.n_jobs, **kwargs
             )
             df_treeimp = df_treeimp.sort_values("ratio", ascending=False)
@@ -250,14 +264,18 @@ class MLManager:
         self.proc_check_init()
         self.logger.info("END")
     
-    def proc_fit(self, df: pd.DataFrame):
+    def proc_fit(self, df: pd.DataFrame, is_row: bool=True, is_exp: bool=True, is_ans: bool=True):
         self.logger.info("START")
-        df       = df[self.columns.tolist() + self.columns_ans.tolist()].copy()
-        df       = self.proc_row.fit(df)
-        output_x = self.proc_exp.fit(df[self.columns])
-        output_y = self.proc_ans.fit(df[self.columns_ans])
+        assert isinstance(is_row, bool)
+        assert isinstance(is_exp, bool)
+        assert isinstance(is_ans, bool)
+        df = df[self.columns.tolist() + self.columns_ans.tolist()].copy()
+        df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
+        if is_exp == False and is_ans == False: return df
+        output_x = self.proc_exp.fit(df[self.columns    ], check_inout=["row"]) if is_exp else None
+        output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"]) if is_ans else None
         self.logger.info("END")
-        return output_x, output_y
+        return output_x, output_y, df.index
     
     def proc_call(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
         self.logger.info("START")
@@ -266,10 +284,11 @@ class MLManager:
         assert isinstance(is_ans, bool)
         if is_row:
             df = self.proc_row(df)
+        if is_exp == False and is_ans == False: return df
         output_x = self.proc_exp(df) if is_exp else None
         output_y = self.proc_ans(df) if is_ans else None
         self.logger.info("END")
-        return output_x, output_y
+        return output_x, output_y, df.index
 
     def proc_check_init(self):
         self.logger.info("START")
@@ -279,6 +298,18 @@ class MLManager:
         self.proc_ans.check_proc(False)
         self.proc_ans.is_check = True
         self.logger.info("END")
+    
+    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
+        self.logger.info("START")
+        assert is_exp
+        input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+        self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
+        if self.is_calib:
+            output = self.calibrater.predict_proba(input_x)
+        else:
+            output = self.model.predict_proba(input_x)
+        self.logger.info("END")
+        return output, input_y, input_index
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
@@ -290,15 +321,14 @@ class MLManager:
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
         assert isinstance(is_eval_train, bool)
-        is_reg = False if df_train[self.columns_ans].dtypes[0] in [int, np.int16, np.int32, np.int64] else True
         # pre proc
         if is_proc_fit:
-            train_x, train_y = self.proc_fit(df_train)
+            train_x, train_y, train_index = self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
         else:
-            train_x, train_y = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
+            train_x, train_y, train_index = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
         valid_x, valid_y = None, None
         if df_valid is not None:
-            valid_x, valid_y = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
+            valid_x, valid_y, valid_index = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
         if self.model is None: self.logger.raise_error("model is not set.")
         # fit
         if isinstance(params_fit, str):
@@ -306,429 +336,125 @@ class MLManager:
             params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
             params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
             params_fit = eval(params_fit, {}, params_fit_evaldict)
-        self.logger.info(f"model: {self.model}, is_reg: {is_reg}, fit params: {params_fit}")
+        self.logger.info(f"model: {self.model}, is_reg: {self.is_reg}, fit params: {params_fit}")
         self.logger.info("fitting: start ...")
         self.model.fit(train_x, train_y, **params_fit)
         self.logger.info("fitting: end ...")
-        self.is_model_fit = True
+        self.is_fit = True
         # eval
         self.logger.info("evaluate model.")
         if valid_x is not None:
             self.logger.info("evaluate valid.")
-            se_eval, df_eval = eval_model(self.model, valid_x, valid_y, is_reg=is_reg)
+            se_eval, df_eval = eval_model(self.model, valid_x, valid_y, is_reg=self.is_reg)
             self.eval_valid_se = se_eval.copy()
             self.eval_valid_df = df_eval.copy()
+            self.eval_valid_df["index"] = valid_index
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_eval_train:
             self.logger.info("evaluate train.")
-            se_eval, df_eval = eval_model(self.model, train_x, train_y, is_reg=is_reg)
+            se_eval, df_eval = eval_model(self.model, train_x, train_y, is_reg=self.is_reg)
             self.eval_train_se = se_eval.copy()
             self.eval_train_df = df_eval.copy()
+            self.eval_train_df["index"] = train_index
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         self.logger.info("END")
 
-
     def fit_cross_validation(
-            self, df_learn: pd.DataFrame, indexes_train: List[np.ndarray], indexes_valid: List[np.ndarray], 
-            indexes_select: List[int]=None,
-            fit_params={}, eval_params={"n_round":3, "eval_auc_dict":{}}, pred_params={"do_estimators":False}, 
-            is_save_traindata: bool=False, get_model_attribute: str= None, is_preproc_fit: bool=True, is_save_valid: bool=True
+            self, df_train: pd.DataFrame, n_split: int=None, n_cv: int=None,
+            indexes_train: List[np.ndarray]=None, indexes_valid: List[np.ndarray]=None,
+            params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={},
+            is_proc_fit_every_cv: bool=True, is_save_model: bool=False
         ):
-        """
-        交差検証を行い、モデルを作成する.
-        ※ほとんどは fit 関数と共通するのでそちらを参照する
-        Params::
-            df_learn: 訓練データ
-            indexes_train: list 形式の df.loc[xxx] でアクセスできる index が格納されたデータ
-            indexes_valid: list 形式の df.loc[xxx] でアクセスできる index が格納されたデータ
-            is_save_traindata: 訓練データを格納するかどうか
-            get_model_attribute: 交差検証中に fit後の model から取りたいデータがあればここで attribute を指定する
-        """
         self.logger.info("START")
-        self.logger.info(
-            f'df shape: {df_learn.shape}, indexes_train: {indexes_train}, indexes_valid: {indexes_valid}, ' +
-            f'fit_params: {fit_params}, fit_params_treval_params: {eval_params}, pred_params: {pred_params}, ' + 
-            f'is_save_traindata: {is_save_traindata}, get_model_attribute: {get_model_attribute}'
-        )
-        self.logger.info(f"features: {self.colname_explain.shape}")
-        if self.model is None:
-            self.logger.raise_error("model is not set.")
-
-        # 交差検証開始
-        df_score_train, df_score_valid, list_model_attribute = [], [], []
-        for i_valid, (index_train, index_valid) in enumerate(zip(indexes_train, indexes_valid)):
-            self.logger.info(f"Cross Validation : {i_valid} start...")
-            if indexes_select is None or i_valid in indexes_select:
-                df_train = df_learn.loc[index_train, :].copy()
-                df_valid = df_learn.loc[index_valid, :].copy()
-                self.fit(df_train, df_valid=df_valid, fit_params=fit_params, eval_params=eval_params, pred_params=pred_params, is_preproc_fit=is_preproc_fit, is_pred_train=is_save_traindata)
-                self.df_pred_train["i_valid"] = i_valid
-                self.df_pred_valid["i_valid"] = i_valid
-                if is_save_valid: self.save(name=(self.name + f".{i_valid}"), mode=1, exist_ok=True, remake=False)
-                if is_save_traindata: df_score_train.append(self.df_pred_train.copy())
-                df_score_valid.append(self.df_pred_valid.copy())
-                ## validation の model の中で取りたい変数があればここで取得する
-                if get_model_attribute is not None:
-                    list_model_attribute.append(self.model.__getattribute__(get_model_attribute))
-                self.logger.info(f"Cross Validation : {i_valid} end...")
-            else:
-                self.logger.info(f"Cross Validation : {i_valid} skip...")
-        if is_save_traindata:
-            df_score_train     = pd.concat(df_score_train, axis=0, sort=False, ignore_index=True)
-            self.df_pred_train = df_score_train.copy()
-            self.index_train   = self.df_pred_train["index"].values # DaaFrame のインデックスを残しておく
-        df_score_valid        = pd.concat(df_score_valid, axis=0, sort=False, ignore_index=True)
-        self.df_pred_valid_cv = df_score_valid.copy()
-        self.index_valid_cv   = self.df_pred_valid_cv["index"].values # DaaFrame のインデックスを残しておく
-        # 検証データを評価する(交差検証では訓練データの記録は残しにくいので残さない)
-        if self.df_pred_valid_cv.columns.isin(["predict", "answer"]).sum() == 2:
-            df_conf, se_eval = self.eval_model(self.df_pred_valid_cv, **eval_params)
-            self.logger.info("evaluation model by train data.")
-            self.df_cm_valid_cv   = df_conf.copy()
-            self.se_eval_valid_cv = se_eval.astype(str).copy()
-            self.logger.info(f'\n{self.df_cm_valid_cv}\n{self.se_eval_valid_cv}')
-        self.logger.info("END")
-
-
-    def calibration(self):
-        """
-        予測確率のキャリブレーション
-        予測モデルは作成済みで別データでfittingする場合
-        """
-        self.logger.info("START")
-        if self.is_model_fit == False:
-            self.logger.raise_error("model is not fitted.")
-        if self.is_classification_model() == False:
-            self.logger.raise_error("model type is not classification")
-        self.calibrater = Calibrater(self.model)
-        self.logger.info("\n%s", self.calibrater)
-        ## fittingを行う
-        df = self.df_pred_valid_cv.copy()
-        if df.shape[0] == 0:
-            ## クロスバリデーションを行っていない場合はエラー
-            self.logger.raise_error("cross validation is not done !!")
-        X = df.loc[:, df.columns.str.contains("^predict_proba_")].values
-        Y = df["answer"].values
-        self.calibrater.fit(X, Y)
-        self.is_calibration = True # このフラグでON/OFFする
-        # ここでのXは確率なので、mockを使って補正後の値を確認する
-        pred_prob_bef = X
-        pred_prob_aft = self.calibrater.predict_proba_mock(X)
-        self.is_calibration = True # このフラグでON/OFFする
-        # Calibration Curve Plot
-        classes = np.sort(np.unique(Y).astype(int))
-        self.fig["calibration_curve"] = plt.figure(figsize=(12, 8))
-        ax1 = self.fig["calibration_curve"].add_subplot(2,1,1)
-        ax2 = self.fig["calibration_curve"].add_subplot(2,1,2)
-        ## ラベル数に応じて処理を分ける
-        for i, i_class in enumerate(classes):
-            ## 変化の前後を記述する
-            fraction_of_positives, mean_predicted_value = calibration_curve((Y==i_class), pred_prob_bef[:, i], n_bins=10)
-            ax1.plot(mean_predicted_value, fraction_of_positives, "s:", label="before_label_"+str(i_class))
-            ax2.hist(pred_prob_bef[:, i], range=(0, 1), bins=10, label="before_label_"+str(i_class), histtype="step", lw=2)
-            fraction_of_positives, mean_predicted_value = calibration_curve((Y==i_class), pred_prob_aft[:, i], n_bins=10)
-            ax1.plot(mean_predicted_value, fraction_of_positives, "s-", label="after_label_"+str(i_class))
-        ax1.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
-        ax1.legend()
-        ax2.legend()
-        ax1.set_title('Calibration plots  (reliability curve)')
-        ax2.set_xlabel('Mean predicted value')
-        ax1.set_ylabel('Fraction of positives')
-        ax2.set_ylabel('Count')
-
-        self.logger.info("END")
-
-
-    def predict(self, df: pd.DataFrame=None, _X: np.ndarray=None, _Y: np.ndarray=None, pred_params={"do_estimators":False}, row_proc: bool=True):
-        """
-        モデルの予測
-        Params::
-            df: input DataFrame
-            _X: ndarray (こちらが入力されたらpre_proc_などの処理が短縮される)
-            _Y: ndarray (こちらが入力されたらpre_proc_などの処理が短縮される)
-        """
-        self.logger.info("START")
-        self.logger.info("df:%s, X:%s, Y:%s, pred_params:%s", \
-                         df if df is None else df.shape, \
-                         _X if _X is None else _X.shape, \
-                         _Y if _Y is None else _Y.shape, \
-                         pred_params)
-        if self.is_model_fit == False:
-            self.logger.raise_error("model is not fitted.")
-
-        # 下記の引数パターンの場合はエラーとする
-        if (type(df) == type(None)) and (type(_X) == type(None)):
-            self.logger.raise_error("df and _X is null.")
-
-        pred_params  = pred_params.copy()
-        pred_params["n_jobs"] = self.n_jobs
-            
-        # 前処理の結果を反映する
-        X = None
-        if df is not None and row_proc: df = self.preproc(df, x_proc=False, y_proc=False, row_proc=True) # ここで変換しないとdf_scoreとのindexが合わない
-        if _X is None:
-            X, _ = self.preproc(df, x_proc=True, y_proc=False, row_proc=False, autofix=True)
+        assert isinstance(df_train, pd.DataFrame)
+        assert isinstance(is_proc_fit_every_cv, bool)
+        assert isinstance(is_save_model, bool)
+        if n_split is None:
+            assert indexes_train is not None and check_type_list(indexes_train, np.ndarray)
+            assert indexes_valid is not None and check_type_list(indexes_valid, np.ndarray)
+            assert len(indexes_train) == len(indexes_valid)
+            n_cv = len(indexes_train)
         else:
-            # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
-            X = _X
-
-        # 予測処理
-        ## キャリブレーターの有無で渡すモデルを変える
-        df_score = None
-        if self.is_calibration:
-            self.logger.info("predict with calibrater.")
-            df_score = predict_detail(self.calibrater, X, **pred_params)
-        else:
-            self.logger.info("predict with no calibrater.")
-            df_score = predict_detail(self.model,      X, **pred_params)
-
-        if df is not None:
-            df_score["index"] = df.index.values.copy()
-            for x in self.colname_other: df_score["other_"+x] = df[x].copy().values
-
-        try:
-            Y = None
-            if _Y is None and df is not None:
-                _, Y = self.preproc(df, x_proc=False, y_proc=True, row_proc=False, autofix=True)
-            else:
-                # numpy変換処理での遅延を避けるため、引数でも指定できるようにする
-                Y = _Y
-            if   len(Y.shape) == 1: df_score["answer"] = Y
-            elif len(Y.shape) == 2: df_score[[f"answer{i}" for i in range(Y.shape[1])]] = Y
-        except KeyError:
-            self.logger.warning("answer is none. predict only.")
-        except ValueError:
-            # いずれは削除する
-            self.logger.warning("Preprocessing answer's label is not work.")
-
-        self.logger.info("END")
-        return df_score
-
-
-    # テストデータでの検証. 結果は上位に返却
-    def predict_testdata(
-            self, df_test, store_eval=False, eval_params={"n_round":3, "eval_auc_list":[]},
-            pred_params={"do_estimators":False}, row_proc: bool=True
-        ):
-        """
-        テストデータを予測し、評価する
-        """
-        self.logger.info("START")
-        self.logger.info("df:%s, store_eval:%s, eval_params:%s, pred_params:%s", \
-                         df_test.shape, store_eval, eval_params, pred_params)
-        if self.is_model_fit == False:
-            self.logger.raise_error("model is not fitted.")
-        eval_params  = eval_params.copy()
-        pred_params  = pred_params.copy()
-        # 予測する
-        df_score = self.predict(df=df_test, pred_params=pred_params, row_proc=row_proc)
-        df_score["i_split"] = 0
-        for x in self.colname_other: df_score["other_"+x] = df_test[x].values
-        self.df_pred_test = df_score.copy()
-        ## 評価値を格納
-        df_conf, se_eval = self.eval_model(df_score, **eval_params)
-        self.logger.info("\n%s", df_conf)
-        self.logger.info("\n%s", se_eval)
-        colname_answer, _y_test = df_score.columns[df_score.columns.str.contains("^answer", regex=True)].tolist(), None
-        if len(colname_answer) > 0:
-            _y_test = df_score[colname_answer].values
-            if store_eval == True:
-                ## データを格納する場合(下手に上書きさせないためデフォルトはFalse)
-                self.df_cm_test   = df_conf.copy()
-                self.se_eval_test = se_eval.copy()
-                ## テストデータの割合を格納
-                if len(_y_test.shape) == 2 and _y_test.shape[1] == 1: _y_test = _y_test.reshape(-1)
-                if len(_y_test.shape) == 1 and _y_test.dtype in [np.int8, np.int16, np.int32, np.int64]:
-                    sewk = pd.DataFrame(_y_test).groupby(0).size().sort_index()
-                    self.n_tested_samples = {int(x):sewk[int(x)] for x in self.model.classes_}
-            # ROC Curve plot(クラス分類時のみ行う)
-            ## ラベル数分作成する
-            if len(_y_test.shape) == 1 and _y_test.dtype in [np.int8, np.int16, np.int32, np.int64]:
-                for _x in df_score.columns[df_score.columns.str.contains("^predict_proba_")]:
-                    y_ans = _y_test
-                    y_pre = df_score[_x].values
-                    lavel = int(_x.split("_")[-1])
-                    self.plot_roc_curve("roc_curve_"+str(lavel), (y_ans==lavel), y_pre)
-        self.logger.info("END")
-        return df_conf, se_eval
-
-
-    # 各特長量をランダムに変更して重要度を見積もる
-    ## ※個別定義targetに関してはランダムに変更することを想定しない!!
-    def calc_permutation_importance(self, df, n_trial, calc_size=0.1, eval_method="roc_auc", eval_params={"pos_label":(1,0,), "eval_auc_list":[]}):
-        self.logger.info("START")
-        self.logger.info("df:%s, n_trial:%s, calc_size:%s, eval_method:%s, eval_params:%s", \
-                         df.shape, n_trial, calc_size, eval_method, eval_params)
-        self.logger.info("features:%s", self.colname_explain.shape)
-        if self.model is None:
-            self.logger.raise_error("model is not set.")
-
-        # aucの場合は確立が出せるモデルであることを前提とする
-        if (eval_method == "roc_auc") or (eval_method == "roc_auc_multi"):
-            if is_callable(self.model, "predict_proba") == False:
-                self.logger.raise_error("this model do not predict probability.")
-
-        # 個別に追加定義したtargetがあれば作成する
-        X, Y = self.preproc(df)
-
-        # まずは、正常な状態での評価値を求める
-        ## 時間短縮のためcalc_sizeを設け、1未満のサイズではその割合のデータだけ
-        ## n_trial の回数まわしてscoreを計算し、2群間のt検定をとる
-        score_normal_list = np.array([])
-        X_index_list = []
-        if calc_size >= 1:
-            df_score     = self.predict(_X=(X[0] if len(X)==1 else tuple(X)), \
-                                        _Y=(Y[0] if len(Y)==1 else tuple(Y)), \
-                                        pred_params={"do_estimators":False})
-            score_normal = evalate(eval_method, df_score["answer"].values, df_score["predict"].values, \
-                                df_score.loc[:, df_score.columns.str.contains("^predict_proba_")].values, \
-                                **eval_params)
-            score_normal_list = np.append(score_normal_list, score_normal)
-            for i in range(n_trial):
-                X_index_list.append(np.arange(X[0].shape[0]))
-        else:
-            # calc_sizeの割合に縮小したデータに対してn_trial回数回す
-            for i in range(n_trial):
-                _random_index = np.random.permutation(np.arange(X[0].shape[0]))[:int(X[0].shape[0]*calc_size)]
-                X_index_list.append(_random_index.copy())
-                df_score      = self.predict(_X=(X[0][_random_index] if len(X) == 1 else tuple([__X[_random_index] for __X in X])),
-                                             _Y=(Y[0][_random_index] if len(Y) == 1 else tuple([__Y[_random_index] for __Y in Y])),
-                                             pred_params={"do_estimators":False})
-                score_normal  = evalate(eval_method, df_score["answer"].values, df_score["predict"].values, \
-                                     df_score.loc[:, df_score.columns.str.contains("^predict_proba_")].values, \
-                                     **eval_params)
-                score_normal_list = np.append(score_normal_list, score_normal)
-        self.logger.info(f"model normal score is {eval_method}={score_normal_list.mean()} +/- {score_normal_list.std()}")
-
-        # 特徴量をランダムに変化させて重要度を計算していく
-        self.df_feature_importances_modeling = pd.DataFrame(columns=["feature_name", "p_value", "t_value", \
-                                                                  "score", "score_diff", "score_std"])
-        ## 短縮のため、決定木モデルでimportanceが0の特徴量は事前に省く
-        colname_except_list = np.array([])
-        if self.df_feature_importances.shape[0] > 0:
-            colname_except_list = self.df_feature_importances[self.df_feature_importances["importance"] == 0]["feature_name"].values.copy()
-        for i_colname, colname in enumerate(self.colname_explain):
-            index_colname = df[self.colname_explain].columns.get_indexer([colname]).min()
-            self.logger.debug("step : %s, feature is shuffled : %s", i_colname, colname)
-            if np.isin(colname, colname_except_list).min() == False:
-                ## 短縮リストにcolnameが存在しない場合
-                score_random_list = np.empty(0)
-                X_colname_bk      = X[0][:, index_colname].copy() # 後で戻せるようにバックアップする
-                ## ランダムに混ぜて予測させる
-                for i in range(n_trial):
-                    X[:, index_colname] = np.random.permutation(X_colname_bk).copy()
-                    df_score = self.predict(_X=(X[0][X_index_list[i]] if len(X) == 1 else tuple([__X[X_index_list[i]] for __X in X])), \
-                                            _Y=(Y[0][X_index_list[i]] if len(Y) == 1 else tuple([__Y[X_index_list[i]] for __Y in Y])), \
-                                            pred_params={"do_estimators":False})
-                    score    = evalate(eval_method, df_score["answer"].values, df_score["predict"].values, \
-                                    df_score.loc[:, df_score.columns.str.contains("^predict_proba_")].values, \
-                                    **eval_params)
-                    score_random_list = np.append(score_random_list, score)
-
-                _t, _p = np.nan, np.nan
-                if calc_size >= 1:
-                    # t検定により今回のスコアの分布を評価する
-                    _t, _p = stats.ttest_1samp(score_random_list, score_random_list[-1])
-                else:
-                    # t検定(非等分散と仮定)により、ベストスコアと今回のスコアの分布を評価する
-                    _t, _p = stats.ttest_ind(score_random_list, score_random_list, axis=0, equal_var=False, nan_policy='propagate')
-                
-                # 結果の比較(スコアは小さいほど良い)
-                self.logger.info("random score: %s = %s +/- %s. p value = %s, statistic(t value) = %s, score_list:%s", \
-                                 eval_method, score_random_list.mean(), score_random_list.std(), \
-                                 _p, _t, score_random_list)
-
-                # 結果の格納
-                self.df_feature_importances_modeling = \
-                    self.df_feature_importances_modeling.append({"feature_name":colname, "p_value":_p, "t_value":_t, \
-                                                              "score":score_random_list.mean(), \
-                                                              "score_diff":score_normal - score_random_list.mean(), \
-                                                              "score_std":score_random_list.std()}, ignore_index=True)
-                # ランダムを元に戻す
-                X[0][:, index_colname] = X_colname_bk.copy()
-            else:
-                ## 短縮する場合
-                self.logger.info("random score: omitted")
-                # 結果の格納
-                self.df_feature_importances_modeling = \
-                    self.df_feature_importances_modeling.append({"feature_name":colname, "p_value":np.nan, "t_value":np.nan, \
-                                                              "score":np.nan, "score_diff":np.nan, "score_std":np.nan}, ignore_index=True)
-        self.logger.info("END")
-
-
-    # Oputuna で少数なデータから(あまり時間をかけずに)ハイパーパラメータを探索する
-    # さらに、既知のアルゴリズムに対する設定を予め行っておく。
-    # ※色々とパラメータ固定してからoptunaさせる方がよい. 学習率とか..
-    def search_hyper_params(
-        self, df_train: pd.DataFrame, df_test: pd.DataFrame, tuning_eval: str, 
-        study_name: str=None, storage: str=None, load_study: bool=False, n_trials: int=10, n_jobs: int=1,
-        dict_param="auto", params_add: dict=None, fit_params: dict={}, eval_params: dict={},
-    ):
-        """
-        Params::
-            storage: optuna の履歴を保存する
-        Usage::
-            self.search_hyper_params(
-                df_train, df_test, "multi_logloss", 
-                n_trials=args.get("trial", int, 200),
-                dict_param = {
-                    "boosting_type"    :["const", "gbdt"],
-                    "num_leaves"       :["const", 100],
-                    "max_depth"        :["const", -1],
-                    "learning_rate"    :["const", 0.1], 
-                    "n_estimators"     :["const", 1000], 
-                    "subsample_for_bin":["const", 200000], 
-                    "objective"        :["const", "multiclass"], 
-                    "class_weight"     :["const", "balanced"], 
-                    "min_child_weight" :["log", 1e-3, 1000.0],
-                    "min_child_samples":["int", 1,100], 
-                    "subsample"        :["float", 0.01, 1.0], 
-                    "colsample_bytree" :["const", 0.25], 
-                    "reg_alpha"        :["const", 0.0],
-                    "reg_lambda"       :["log", 1e-3, 1000.0],
-                    "random_state"     :["const", 1], 
-                    "n_jobs"           :["const", mymodel.n_jobs] 
-                },
-                fit_params={
-                    "early_stopping_rounds": 10,
-                    "eval_set": [(x_valid, y_valid)],
-                },
+            assert isinstance(n_split, int) and n_split >= 2
+            assert isinstance(n_cv,    int) and n_cv    >= 1 and n_cv <= n_split
+        df_train = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
+        if not is_proc_fit_every_cv:
+            self.proc_fit(df_train, is_row=False, is_exp=True, is_ans=True)
+        if n_split is not None:
+            indexes_train, indexes_valid = [], []
+            splitter = StratifiedKFold(n_splits=n_split)
+            _, ndf_y, _ = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=True)
+            try:
+                for index_train, index_test in splitter.split(np.arange(df_train.shape[0], dtype=int), ndf_y):
+                    indexes_train.append(index_train)
+                    indexes_valid.append(index_test )
+            except ValueError as e:
+                logger.warning(f"{e}")
+                logger.info("use normal random splitter.")
+                indexes     = np.arange(df_train.shape[0], dtype=int)
+                index_split = np.array_split(indexes, n_split)
+                for i in range(n_cv):
+                    indexes_train.append(indexes[~np.isin(indexes, index_split[i])].copy())
+                    indexes_valid.append(index_split[i].copy())
+        for i_cv, (index_train, index_valid) in enumerate(zip(indexes_train, indexes_valid)):
+            i_cv += 1
+            self.logger.info(f"cross validation : {i_cv} / {n_cv} start...")
+            self.reset_model()
+            self.fit(
+                df_train=df_train.iloc[index_train], df_valid=df_train.iloc[index_valid],
+                is_proc_fit=is_proc_fit_every_cv, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
+                is_eval_train=False
             )
-        """
-        self.logger.info("START")
-        # numpyに変換
-        X, Y           = self.preproc(df_train, autofix=True, x_proc=True, y_proc=True, row_proc=True, ret_index=False)
-        X_test, Y_test = self.preproc(df_test,  autofix=True, x_proc=True, y_proc=True, row_proc=True, ret_index=False)
-        df_optuna, best_params = search_hyperparams_by_optuna(
-            self.model, X, Y, X_test, Y_test, 
-            study_name=study_name, storage=storage, load_study=load_study, n_trials=n_trials, n_jobs=n_jobs, 
-            dict_param=dict_param, params_add=params_add, tuning_eval=tuning_eval,
-            fit_params=fit_params, eval_params=eval_params
-        )
-        self.optuna_result = df_optuna.copy()
-        self.optuna_params = best_params
+            self.logger.info(f"cross validation : {i_cv} / {n_cv} end  ...")
+            setattr(self, f"eval_valid_df_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_df)
+            setattr(self, f"eval_valid_se_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_se)
+            if is_save_model:
+                setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", copy.deepcopy(self.model))
+            if i_cv >= n_cv: break
+        self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-
-    def plot_roc_curve(self, name, y_ans, y_pred_prob):
+    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10):
         self.logger.info("START")
-        # canvas の追加
-        self.fig[name] = plt.figure(figsize=(12, 8))
-        ax = self.fig[name].add_subplot(1,1,1)
-
-        fpr, tpr, _ = roc_curve(y_ans, y_pred_prob)
-        _auc = auc(fpr, tpr)
-
-        # ROC曲線をプロット
-        ax.plot(fpr, tpr, label='ROC curve (area = %.3f)'%_auc)
-        ax.legend()
-        ax.set_title('ROC curve')
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.grid(True)
+        assert not self.is_reg
+        assert self.is_fit
+        if df_calib is None:
+            assert len(self.list_cv) > 0
+        else:
+            assert isinstance(df_calib, pd.DataFrame)
+        calibrater = Calibrater(self.model)
+        # fitting
+        input_x, input_y = None, None
+        if df_calib is None:
+            df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in self.list_cv], axis=0, ignore_index=True, sort=False)
+            input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
+            input_y = df.loc[:, df.columns == "answer"].values.reshape(-1)
+        else:
+            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
+        self.logger.info("calibration start...")
+        calibrater.fit(input_x, input_y)
+        self.logger.info("calibration end...")
+        self.calibrater = calibrater
+        output          = self.calibrater.calibrater.predict_proba(input_x)
+        self.is_calib   = True
+        self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         self.logger.info("END")
+
+    def evaluate(self, df_test: pd.DataFrame, is_store: bool=False):
+        self.logger.info("START")
+        assert isinstance(is_store, bool)
+        test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=True)
+        se_eval, df_eval = eval_model(self.model, test_x, test_y, is_reg=self.is_reg)
+        for x in se_eval.index:
+            self.logger.info(f"{x}: {se_eval.loc[x]}")
+        if is_store:
+            self.eval_test_se = se_eval.copy()
+            self.eval_test_df = df_eval.copy()
+            self.eval_test_df["index"] = test_index
+        self.logger.info("END")
+        return df_eval, se_eval
 
     def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8"):
         self.logger.info("START")

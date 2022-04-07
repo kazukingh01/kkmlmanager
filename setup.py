@@ -28,6 +28,7 @@ setup(
         "numpy>=1.21.5",
         "pandas>=1.3.5",
         "scikit-learn>=1.0.2",
+        "matplotlib>=3.5.1",
     ],
     python_requires='>=3.8'
 )

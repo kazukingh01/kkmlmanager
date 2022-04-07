@@ -197,6 +197,8 @@ class ProcReplaceValue(BaseProc):
             assert len(input.shape) == 2
         if self.indexes is None:
             self.indexes = slice(None)
+        elif self.indexes == slice(None):
+            pass
         else:
             if self.is_df:
                 assert check_type_list(self.indexes, str)
@@ -279,6 +281,8 @@ class ProcAsType(BaseProc):
         if self.is_df:
             if self.indexes is None:
                 self.indexes = slice(None)
+            elif self.indexes == slice(None):
+                pass
             else:
                 if isinstance(self.indexes, str):
                     self.indexes = [self.indexes, ]

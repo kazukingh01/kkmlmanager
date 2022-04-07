@@ -70,7 +70,7 @@ def get_features_by_variance(
     df_sort  = pd.DataFrame(index=np.arange(df.shape[0]))
     dtypes   = df.dtypes.copy()
     list_obj = []
-    for _cols in df.dtypes.unique():
+    for _cols in dtypes.unique():
         list_obj += parallel_apply(df.loc[:, dtypes.index[dtypes == _cols]], lambda x: [x.columns, np.sort(x.values, axis=0)], axis=0, batch_size=batch_size, n_jobs=n_jobs)
     df_sort  = pd.concat([pd.DataFrame(y, columns=x) for x, y in list_obj], axis=1, ignore_index=False)
     df_sort  = df_sort.loc[:, columns]
@@ -462,10 +462,11 @@ def get_features_by_correlation(
     assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
     assert isinstance(corr_type, str) and corr_type in ["pearson", "spearman", "kendall"]
     assert isinstance(min_n,      int) and min_n > 0
-    assert isinstance(batch_size, int) and batch_size >= 0
+    assert isinstance(batch_size, int) and batch_size >= 1
     assert isinstance(n_jobs,     int) and n_jobs >= 1
     df_corr = pd.DataFrame(float("nan"), index=df.columns, columns=df.columns)
-    if batch_size == 0:
+    batch_size = min(df.shape[1], batch_size)
+    if batch_size == 1:
         batch = [np.arange(df.shape[1])]
     else:
         batch = np.array_split(np.arange(df.shape[1]), df.shape[1] // batch_size)

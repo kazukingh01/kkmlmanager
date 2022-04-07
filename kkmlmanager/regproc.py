@@ -5,7 +5,7 @@ from typing import List, Union
 # local package
 import kkmlmanager.procs as kkprocs
 from kkmlmanager.procs import BaseProc
-from kkmlmanager.util.com import check_type
+from kkmlmanager.util.com import check_type, check_type_list
 from kkmlmanager.util.logger import set_logger
 logger = set_logger(__name__)
 
@@ -50,9 +50,12 @@ class RegistryProc(object):
         for proc in self.procs:
             proc.is_check = is_check
     
-    def fit(self, input: Union[pd.DataFrame, np.ndarray]):
+    def fit(self, input: Union[pd.DataFrame, np.ndarray], check_inout: List[str]=None):
         logger.info("START")
         assert check_type(input, [pd.DataFrame, np.ndarray])
+        if check_inout is None: check_inout = []
+        assert check_type_list(check_inout, str)
+        for x in check_inout: assert x in ["class", "row", "col"]
         if isinstance(input, pd.DataFrame):
             assert input.columns.dtype == object
             self.shape = input.columns.copy()
@@ -64,6 +67,10 @@ class RegistryProc(object):
             logger.info(f"proc: {proc} fit")
             output = proc.fit(output)
             logger.info(f"output: {__class__.info_value(output)}")
+        for x in check_inout:
+            if   x == "class": type(input) == type(output)
+            elif x == "row": input.shape[0]  == output.shape[0]
+            elif x == "col": input.shape[-1] == output.shape[-1]
         self.is_fit = True
         logger.info("END")
         return output

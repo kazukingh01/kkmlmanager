@@ -40,10 +40,12 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, func_aft
     if   axis == 0:
         batch = np.arange(df.shape[1])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
+        else: batch = batch.reshape(-1, 1)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[:, i_batch]) for i_batch in batch])
     elif axis == 1:
         batch = np.arange(df.shape[0])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
+        else: batch = batch.reshape(-1, 1)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[i_batch   ]) for i_batch in batch])
     else:
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size=batch_size)([delayed(func)(dfwk) for _, dfwk in df.groupby(group_key)])
@@ -80,6 +82,7 @@ def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=
                 colbool = df.columns.isin(from_dtype)
         if colbool is None:
             raise Exception(f"from_dtype: {from_dtype} is not matched.")
+        colbool = ((df.dtypes != to_dtype).values & colbool)
         if colbool.sum() > 0:
             dfwk = parallel_apply(
                 df.loc[:, colbool].copy(), lambda x: x.astype(to_dtype), axis=0, 
