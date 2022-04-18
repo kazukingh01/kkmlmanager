@@ -525,7 +525,7 @@ class MultiModel:
         assert isinstance(funcname, str)
         output = None
         for i, model in enumerate(self.models):
-            logger.info(f"predic model {i}")
+            logger.info(f"predict model {i}")
             _output = getattr(model, funcname)(input) * weight[i]
             if output is None: output  = _output
             else:              output += _output
