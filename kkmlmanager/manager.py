@@ -18,7 +18,8 @@ logger = set_logger(__name__)
 
 __all__ = [
     "MLManager",
-    "load_manager"
+    "load_manager",
+    "MultiModel",
 ]
 
 
@@ -299,17 +300,28 @@ class MLManager:
         self.proc_ans.is_check = True
         self.logger.info("END")
     
-    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
+    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_pred_cv: bool=False):
         self.logger.info("START")
         assert is_exp
+        if is_pred_cv:
+            if not hasattr(self, "model_multi"): self.set_cvmodel()
+            model_mode = "model_multi"
+        else:
+            model_mode = "model"
         input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
         if self.is_calib:
             output = self.calibrater.predict_proba(input_x)
         else:
-            output = self.model.predict_proba(input_x)
+            output = getattr(self, model_mode).predict_proba(input_x)
         self.logger.info("END")
         return output, input_y, input_index
+    
+    def set_cvmodel(self):
+        self.logger.info("START")
+        assert len(self.list_cv) > 0
+        self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv])
+        self.logger.info("END")
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
@@ -416,7 +428,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10):
+    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10, is_pred_cv: bool=False):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -424,7 +436,12 @@ class MLManager:
             assert len(self.list_cv) > 0
         else:
             assert isinstance(df_calib, pd.DataFrame)
-        calibrater = Calibrater(self.model)
+        if is_pred_cv:
+            if not hasattr(self, "model_multi"): self.set_cvmodel()
+            model_mode = "model_multi"
+        else:
+            model_mode = "model"
+        calibrater = Calibrater(getattr(self, model_mode))
         # fitting
         input_x, input_y = None, None
         if df_calib is None:
@@ -432,7 +449,7 @@ class MLManager:
             input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
             input_y = df.loc[:, df.columns == "answer"].values.reshape(-1)
         else:
-            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
+            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True, is_pred_cv=is_pred_cv)
         self.logger.info("calibration start...")
         calibrater.fit(input_x, input_y)
         self.logger.info("calibration end...")
@@ -489,3 +506,38 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
             manager.logger.internal_stream.write(f.read())
     logger.info("END")
     return manager
+
+
+class MultiModel:
+    def __init__(self, models: List[object]):
+        assert isinstance(models, list) and len(models) > 0
+        self.classes_ = models[0].classes_ if hasattr(models[0], "classes_") else None
+        for model in models:
+            assert hasattr(model, "predict")
+            assert hasattr(model, "predict_proba")
+            if self.classes_ is not None:
+                assert np.all(self.classes_ == model.classes_)
+        self.models = models
+    def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict"):
+        assert isinstance(input, np.ndarray)
+        if weight is None: weight = [1.0] * len(self.models)
+        assert check_type_list(weight, float)
+        assert isinstance(funcname, str)
+        output = None
+        for i, model in enumerate(self.models):
+            logger.info(f"predic model {i}")
+            _output = getattr(model, funcname)(input) * weight[i]
+            if output is None: output  = _output
+            else:              output += _output
+        output = output / sum(weight)
+        return output
+    def predict(self, input: np.ndarray, weight: List[float]=None):
+        logger.info("START")
+        output = self.predict_common(input, weight=weight, funcname="predict")
+        logger.info("END")
+        return output
+    def predict_proba(self, input: np.ndarray, weight: List[float]=None):
+        logger.info("START")
+        output = self.predict_common(input, weight=weight, funcname="predict_proba")
+        logger.info("END")
+        return output

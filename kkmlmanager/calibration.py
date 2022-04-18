@@ -1,3 +1,4 @@
+from typing import List
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
@@ -34,10 +35,6 @@ class MockCalibrater(BaseEstimator):
 
 class Calibrater:
     def __init__(self, model):
-        """
-        Params::
-            model: Fitting済みのmodel
-        """
         logger.info("START")
         assert hasattr(model, "predict")
         assert hasattr(model, "predict_proba")
@@ -97,22 +94,24 @@ def calibration_curve_plot(prob_pre: np.ndarray, prob_aft: np.ndarray, target: n
     assert len(target.shape) == 1
     assert target.dtype in [np.int8, np.int16, np.int32, np.int64]
     assert isinstance(n_bins, int) and n_bins >= 1
-    classes = np.arange(prob_pre.shape[1], dtype=int)
-    fig = plt.figure(figsize=figsize)
-    ax1 = fig.add_subplot(2,1,1)
-    ax2 = fig.add_subplot(2,1,2)
+    classes  = np.arange(prob_pre.shape[1], dtype=int)
+    dict_fig = {}
     for i_class in classes:
+        fig = plt.figure(figsize=figsize)
+        ax1 = fig.add_subplot(2,1,1)
+        ax2 = fig.add_subplot(2,1,2)
         fraction_of_positives_pre, mean_predicted_value_pre = calibration_curve((target == i_class), prob_pre[:, i_class], n_bins=n_bins)
         fraction_of_positives_aft, mean_predicted_value_aft = calibration_curve((target == i_class), prob_aft[:, i_class], n_bins=n_bins)
         ax1.plot(mean_predicted_value_pre, fraction_of_positives_pre, "s:", label=f"pre_label_{i_class}")
         ax1.plot(mean_predicted_value_aft, fraction_of_positives_aft, "s-", label=f"aft_label_{i_class}")
         ax2.hist(prob_pre[:, i_class], range=(0, 1), bins=n_bins, label=f"pre_label_{i_class}", histtype="step", lw=2)
-    ax1.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
-    ax1.legend()
-    ax2.legend()
-    ax1.set_title('Calibration plots (reliability curve)')
-    ax2.set_xlabel('Mean predicted value')
-    ax1.set_ylabel('Fraction of positives')
-    ax2.set_ylabel('Count')
+        ax1.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
+        ax1.legend()
+        ax2.legend()
+        ax1.set_title('Calibration plots (reliability curve)')
+        ax2.set_xlabel('Mean predicted value')
+        ax1.set_ylabel('Fraction of positives')
+        ax2.set_ylabel('Count')
+        dict_fig[f"fig_{i_class}"] = fig
     logger.info("END")
-    return fig
+    return dict_fig
