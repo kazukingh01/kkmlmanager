@@ -24,7 +24,7 @@ class RegistryProc(object):
         assert isinstance(n_jobs, int) and n_jobs >= 1
         super().__init__()
         self.procs: List[BaseProc] = []
-        self.n_jobs   = n_jobs
+        self.n_jobs = n_jobs
         self.initialize()
     
     def __str__(self):
@@ -92,7 +92,7 @@ class RegistryProc(object):
         logger.info(f"input: {__class__.info_value(output)}")
         for proc in self.procs:
             logger.info(f"proc: {proc}")
-            output = proc(output)
+            output = proc(output, n_jobs=self.n_jobs)
             logger.info(f"output: {__class__.info_value(output)}")
         logger.info("END")
         return output

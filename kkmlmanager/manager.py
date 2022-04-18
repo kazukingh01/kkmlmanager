@@ -480,6 +480,9 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
     manager.__class__ = MLManager
     manager.logger = set_logger(manager.logger.name, internal_log=True)
     manager.n_jobs = n_jobs
+    manager.proc_row.n_jobs = n_jobs
+    manager.proc_exp.n_jobs = n_jobs
+    manager.proc_ans.n_jobs = n_jobs
     if os.path.exists(f"{filepath}.log"):
         logger.info(f"load log file: {filepath}.log")
         with open(f"{filepath}.log", mode='r') as f:

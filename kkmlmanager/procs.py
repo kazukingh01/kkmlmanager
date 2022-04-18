@@ -51,8 +51,9 @@ class BaseProc:
         if is_df: self.shape_out = output.columns.copy()
         else:     self.shape_out = output.shape[1:]
         return output
-    def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
+    def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, n_jobs: int=None, **kwargs):
         if not self.is_fit: raise Exception("You must use 'fit' first.")
+        if n_jobs is not None: self.n_jobs = n_jobs
         if self.is_check:
             if self.is_df:
                 assert len(self.shape_in) == len(input.columns)
