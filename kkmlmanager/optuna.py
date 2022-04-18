@@ -6,11 +6,11 @@ logger = set_logger(__name__)
 
 
 __all__ = [
-    "study",
+    "create_study",
 ]
 
 
-def study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None):
+def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None):
     """
     Params::
         storage: postgresql://postgres:postgres@127.0.0.1:5432/optuna
