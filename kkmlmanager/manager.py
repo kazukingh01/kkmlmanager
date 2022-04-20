@@ -54,7 +54,7 @@ class MLManager:
 
     def __str__(self):
         return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_otr}"
-    
+
     def initialize(self):
         self.logger.info("START")
         self.model        = None
@@ -72,6 +72,30 @@ class MLManager:
         self.proc_ans     = RegistryProc(n_jobs=self.n_jobs)
         self.proc_check_init()
         self.logger.info("END")
+    
+    def copy(self, is_minimum: bool=False):
+        assert isinstance(is_minimum, bool)
+        if is_minimum:
+            ins = __class__(
+                self.columns_exp.tolist(), self.columns_ans.tolist(), columns_otr=self.columns_otr.tolist(), 
+                is_reg=self.is_reg, outdir=self.outdir, random_seed=self.random_seed, n_jobs=self.n_jobs
+            )
+            ins.model        = copy.deepcopy(self.model)
+            ins.model_class  = copy.deepcopy(self.model_class)
+            ins.model_args   = copy.deepcopy(self.model_args)
+            ins.model_kwargs = copy.deepcopy(self.model_kwargs)
+            ins.calibrater   = copy.deepcopy(self.calibrater)
+            ins.is_fit       = self.is_fit
+            ins.is_calib     = self.is_calib
+            ins.list_cv      = copy.deepcopy(self.list_cv)
+            ins.columns_hist = copy.deepcopy(self.columns_hist)
+            ins.columns      = self.columns.copy()
+            ins.proc_row     = copy.deepcopy(self.proc_row)
+            ins.proc_exp     = copy.deepcopy(self.proc_exp)
+            ins.proc_ans     = copy.deepcopy(self.proc_ans)
+            return ins
+        else:
+            return copy.deepcopy(self)
 
     def set_model(self, model, *args, **kwargs):
         self.logger.info("START")
@@ -473,19 +497,26 @@ class MLManager:
         self.logger.info("END")
         return df_eval, se_eval
 
-    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8"):
+    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8", is_minimum: bool=False):
         self.logger.info("START")
         assert isinstance(dirpath, str)
         assert isinstance(exist_ok, bool)
         assert isinstance(remake, bool)
+        assert isinstance(is_minimum, bool)
         dirpath = correct_dirpath(dirpath)
         makedirs(dirpath, exist_ok=exist_ok, remake=remake)
         if filename is None: filename = f"mlmanager_{id(self)}.pickle"
         self.logger.info(f"save file: {dirpath + filename}.")
-        with open(dirpath + filename, mode='wb') as f:
-            pickle.dump(self, f, protocol=4)
-        with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
-            f.write(self.logger.internal_stream.getvalue())
+        if is_minimum:
+            with open(dirpath + filename + ".min", mode='wb') as f:
+                pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=4)
+            with open(dirpath + filename + ".min.log", mode='w', encoding=encoding) as f:
+                f.write(self.logger.internal_stream.getvalue())
+        else:
+            with open(dirpath + filename, mode='wb') as f:
+                pickle.dump(self, f, protocol=4)
+            with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
+                f.write(self.logger.internal_stream.getvalue())
         self.logger.info("END")
 
 def load_manager(filepath: str, n_jobs: int) -> MLManager:
