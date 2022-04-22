@@ -187,7 +187,8 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_randomtree_importance(
-        self, df: pd.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, **kwargs
+        self, df: pd.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, 
+        dtype=np.float32, batch_size: int=25, **kwargs
     ):
         self.logger.info("START")
         assert df is None or isinstance(df, pd.DataFrame)
@@ -196,8 +197,8 @@ class MLManager:
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, max_iter: {max_iter}, min_count: {min_count}")
         if df is not None:
             df_treeimp = get_features_by_randomtree_importance(
-                df, self.columns.tolist(), self.columns_ans[0], is_reg=self.is_reg, max_iter=max_iter, 
-                min_count=min_count, n_jobs=self.n_jobs, **kwargs
+                df, self.columns.tolist(), self.columns_ans[0], dtype=dtype, batch_size=batch_size, 
+                is_reg=self.is_reg, max_iter=max_iter, min_count=min_count, n_jobs=self.n_jobs, **kwargs
             )
             df_treeimp = df_treeimp.sort_values("ratio", ascending=False)
             self.features_treeimp = df_treeimp.copy()
@@ -216,7 +217,8 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: Union[int, float]=None, n_split: int=5, n_cv: int=5, **kwargs
+        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: Union[int, float]=None, 
+        n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, **kwargs
     ):
         self.logger.info("START")
         assert df_train is None or isinstance(df_train, pd.DataFrame)
@@ -226,7 +228,7 @@ class MLManager:
         if df_train is not None:
             df_adv, _ = get_features_by_adversarial_validation(
                 df_train, df_test, self.columns.tolist(), columns_ans=None, 
-                n_split=n_split, n_cv=n_cv, n_jobs=self.n_jobs, **kwargs
+                n_split=n_split, n_cv=n_cv, dtype=dtype, batch_size=batch_size, n_jobs=self.n_jobs, **kwargs
             )
             df_adv = df_adv.sort_values("ratio", ascending=False)
             self.features_adversarial = df_adv.copy()
@@ -247,8 +249,8 @@ class MLManager:
         list_proc: List[str] = [
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False, batch_size=128)",
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True,  batch_size=128)",
-            "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000)",
-            "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, n_split=3, n_cv=2)",
+            "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000, dtype=np.float32, batch_size=25)",
+            "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, n_split=3, n_cv=2, dtype=np.float32, batch_size=25)",
             "self.cut_features_by_correlation(df, cutoff=0.99, dtype='float16', is_gpu=True, corr_type='pearson',  batch_size=2000, min_n=100)",
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='spearman', batch_size=500,  min_n=100)",
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
@@ -256,7 +258,7 @@ class MLManager:
     ):
         self.logger.info("START")
         for proc in list_proc:
-            eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test})
+            eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test, "np": np, "pd": pd})
         self.logger.info("END")
     
     def proc_registry(

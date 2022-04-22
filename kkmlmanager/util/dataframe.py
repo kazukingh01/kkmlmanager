@@ -34,7 +34,8 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, func_aft
     if axis == 2: assert group_key is not None and check_type_list(group_key, str)
     assert isinstance(batch_size, int) and batch_size >= 1
     assert isinstance(n_jobs, int) and n_jobs > 0
-    batch_size = min(df.shape[1], batch_size)
+    if   axis == 0: batch_size = min(df.shape[1], batch_size)
+    elif axis == 1: batch_size = min(df.shape[0], batch_size)
     index, columns = df.index, df.columns
     list_object = None
     if   axis == 0:

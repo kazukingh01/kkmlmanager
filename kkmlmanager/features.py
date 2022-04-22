@@ -526,7 +526,7 @@ def get_sklearn_trees_model_info(model) -> pd.DataFrame:
     return df
 
 def get_features_by_randomtree_importance(
-    df: pd.DataFrame, columns_exp: List[str], columns_ans: str, 
+    df: pd.DataFrame, columns_exp: List[str], columns_ans: str, dtype=np.float32, batch_size: int=25,
     is_reg: bool=False, max_iter: int=1, min_count: int=100, n_jobs: int=1, 
     **kwargs
 ) -> pd.DataFrame:
@@ -535,6 +535,8 @@ def get_features_by_randomtree_importance(
     assert check_type_list(columns_exp, str)
     assert isinstance(columns_ans, str)
     assert isinstance(is_reg, bool)
+    assert dtype in [float, np.float16, np.float32, np.float64]
+    assert isinstance(batch_size, int) and batch_size > 0
     # row
     regproc_df = RegistryProc(n_jobs=n_jobs)
     regproc_df.register("ProcDropNa", columns_ans)
@@ -542,7 +544,7 @@ def get_features_by_randomtree_importance(
     df = regproc_df.fit(df[columns_exp + [columns_ans]])
     # columns explain
     regproc_exp = RegistryProc(n_jobs=n_jobs)
-    regproc_exp.register("ProcAsType", np.float32, batch_size=25)
+    regproc_exp.register("ProcAsType", dtype, batch_size=batch_size)
     regproc_exp.register("ProcToValues")
     regproc_exp.register("ProcReplaceInf", posinf=float("nan"), neginf=float("nan"))
     regproc_exp.register("ProcFillNaMinMax")
@@ -583,7 +585,7 @@ def get_features_by_randomtree_importance(
 
 def get_features_by_adversarial_validation(
     df_train: pd.DataFrame, df_test: pd.DataFrame, columns_exp: List[str], columns_ans: str=None,
-    n_split: int=5, n_cv: int=5, n_jobs: int=1, **kwargs
+    n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, n_jobs: int=1, **kwargs
 ):
     logger.info("START")
     assert isinstance(df_train, pd.DataFrame)
@@ -593,11 +595,13 @@ def get_features_by_adversarial_validation(
     if columns_ans is not None: columns_exp = columns_exp + [columns_ans]
     assert isinstance(n_split, int) and n_split >= 2
     assert isinstance(n_cv,    int) and n_cv    >= 1
+    assert dtype in [float, np.float16, np.float32, np.float64]
+    assert isinstance(batch_size, int) and batch_size > 0
     # row
     index_df = np.concatenate([df_train.index.values, df_test.index.values])
     # columns explain
     regproc_exp = RegistryProc(n_jobs=n_jobs)
-    regproc_exp.register("ProcAsType", np.float32, batch_size=25)
+    regproc_exp.register("ProcAsType", dtype, batch_size=batch_size)
     regproc_exp.register("ProcToValues")
     regproc_exp.register("ProcReplaceInf", posinf=float("nan"), neginf=float("nan"))
     regproc_exp.register("ProcFillNaMinMax")

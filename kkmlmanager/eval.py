@@ -23,32 +23,32 @@ def accuracy_top_k(answer: np.ndarray, input: np.ndarray, top_k: int=1):
     ndf = ndf[:, :top_k]
     return (ndf == answer.reshape(-1, 1)).sum() / answer.shape[0]
 
-def predict_model(model, input: np.ndarray):
+def predict_model(model, input: np.ndarray, **kwargs):
     logger.info("START")
     assert isinstance(input, np.ndarray)
     assert len(input.shape) == 2
     df = pd.DataFrame(index=np.arange(input.shape[0]))
     if hasattr(model, "predict"):
         if hasattr(model, "predict_proba"):
-            output = model.predict_proba(input)
+            output = model.predict_proba(input, **kwargs)
             assert isinstance(output, np.ndarray)
             assert len(output.shape) == 2
             ndf_class = model.classes_ if hasattr(model, "classes_") else np.arange(output.shape[1])
             df[[f"predict_proba_{i}" for i in ndf_class.astype(int)]] = output
             df["predict"] = np.argmax(output, axis=1)
         else:
-            output = model.predict(input)
+            output = model.predict(input, **kwargs)
             assert isinstance(output, np.ndarray)
             assert len(output.shape) == 1
             df["predict"] = output
     logger.info("END")
     return df
 
-def eval_model(model, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=False):
+def eval_model(model, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=False, **kwargs):
     logger.info("START")
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
-    df = predict_model(model, input_x)
+    df = predict_model(model, input_x, **kwargs)
     se = pd.Series(dtype=object)
     if is_reg:
         assert len(input_y.shape) == 1
