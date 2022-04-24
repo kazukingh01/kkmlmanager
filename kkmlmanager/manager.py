@@ -331,10 +331,7 @@ class MLManager:
         assert is_exp
         input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
-        if self.is_calib:
-            output = self.calibrater.predict_proba(input_x)
-        else:
-            output = self.get_model().predict_proba(input_x)
+        output = self.get_model().predict_proba(input_x)
         self.logger.info("END")
         return output, input_y, input_index
     
@@ -344,11 +341,13 @@ class MLManager:
         self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv])
         self.logger.info("END")
     
-    def get_model(self):
+    def get_model(self, calib: bool=True):
         if hasattr(self, "model_multi"):
             model_mode = "model_multi"
         else:
             model_mode = "model"
+        if self.is_calib and calib:
+            model_mode = "calibrater"
         return getattr(self, model_mode)
 
     def fit(
@@ -464,7 +463,7 @@ class MLManager:
             assert len(self.list_cv) > 0
         else:
             assert isinstance(df_calib, pd.DataFrame)
-        calibrater = Calibrater(self.get_model())
+        calibrater = Calibrater(self.get_model(calib=False))
         # fitting
         input_x, input_y = None, None
         if df_calib is None:
@@ -486,7 +485,7 @@ class MLManager:
         self.logger.info("START")
         assert isinstance(is_store, bool)
         test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=True)
-        se_eval, df_eval = eval_model(self.model, test_x, test_y, is_reg=self.is_reg)
+        se_eval, df_eval = eval_model(self.get_model(), test_x, test_y, is_reg=self.is_reg)
         for x in se_eval.index:
             self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_store:
