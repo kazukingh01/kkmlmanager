@@ -326,20 +326,15 @@ class MLManager:
         self.proc_ans.is_check = True
         self.logger.info("END")
     
-    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_pred_cv: bool=False):
+    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
         self.logger.info("START")
         assert is_exp
-        if is_pred_cv:
-            if not hasattr(self, "model_multi"): self.set_cvmodel()
-            model_mode = "model_multi"
-        else:
-            model_mode = "model"
         input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
         if self.is_calib:
             output = self.calibrater.predict_proba(input_x)
         else:
-            output = getattr(self, model_mode).predict_proba(input_x)
+            output = self.get_model().predict_proba(input_x)
         self.logger.info("END")
         return output, input_y, input_index
     
@@ -348,6 +343,13 @@ class MLManager:
         assert len(self.list_cv) > 0
         self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv])
         self.logger.info("END")
+    
+    def get_model(self):
+        if hasattr(self, "model_multi"):
+            model_mode = "model_multi"
+        else:
+            model_mode = "model"
+        return getattr(self, model_mode)
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
@@ -454,7 +456,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10, is_pred_cv: bool=False):
+    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -462,12 +464,7 @@ class MLManager:
             assert len(self.list_cv) > 0
         else:
             assert isinstance(df_calib, pd.DataFrame)
-        if is_pred_cv:
-            if not hasattr(self, "model_multi"): self.set_cvmodel()
-            model_mode = "model_multi"
-        else:
-            model_mode = "model"
-        calibrater = Calibrater(getattr(self, model_mode))
+        calibrater = Calibrater(self.get_model())
         # fitting
         input_x, input_y = None, None
         if df_calib is None:
@@ -475,7 +472,7 @@ class MLManager:
             input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
             input_y = df.loc[:, df.columns == "answer"].values.reshape(-1)
         else:
-            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True, is_pred_cv=is_pred_cv)
+            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
         self.logger.info("calibration start...")
         calibrater.fit(input_x, input_y)
         self.logger.info("calibration end...")
