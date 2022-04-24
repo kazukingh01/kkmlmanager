@@ -413,7 +413,7 @@ class MLManager:
             assert indexes_train is not None and check_type_list(indexes_train, np.ndarray)
             assert indexes_valid is not None and check_type_list(indexes_valid, np.ndarray)
             assert len(indexes_train) == len(indexes_valid)
-            n_cv = len(indexes_train)
+            n_cv = len(indexes_train) if n_cv is None else n_cv
         else:
             assert isinstance(n_split, int) and n_split >= 2
             assert isinstance(n_cv,    int) and n_cv    >= 1 and n_cv <= n_split
