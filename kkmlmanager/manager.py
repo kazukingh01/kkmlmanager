@@ -476,7 +476,7 @@ class MLManager:
         calibrater.fit(input_x, input_y)
         self.logger.info("calibration end...")
         self.calibrater = calibrater
-        output          = self.calibrater.calibrater.predict_proba(input_x)
+        output          = self.calibrater.predict_proba(input_x, is_mock=True)
         self.is_calib   = True
         self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         self.logger.info("END")

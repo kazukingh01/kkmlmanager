@@ -75,35 +75,34 @@ class Calibrater:
         ndf = np.stack([1 - ndf, ndf]).T
         return ndf
     
-    def predict(self, input_x, *args, **kwargs):
+    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict", **kwargs)
         """
-        'input_x' is Features. is not Probability.
+        'input_x' is Features. is not Probability ( If is_mock == False ).
         """
         logger.info("START")
-        output = self.model.predict(input_x, *args, **kwargs)
+        if is_mock:
+            output = input_x
+        else:
+            output = getattr(self.model, funcname)(input_x, *args, **kwargs)
         if self.is_fit_by_class:
-            output = self.calibrater.predict(output)
+            output = getattr(self.calibrater, funcname)(output)
         else:
             shape  = output.shape[-1]
             output = self.to_binary_shape(output)
-            output = self.calibrater.predict(output)
+            output = getattr(self.calibrater, funcname)(output)
             output = output[:, -1].reshape(-1, shape)
         logger.info("END")
         return output
-
-    def predict_proba(self, input_x, *args, **kwargs):
-        """
-        'input_x' is Features. is not Probability.
-        """
+    
+    def predict(self, input_x, *args, is_mock: bool=False, **kwargs):
         logger.info("START")
-        output = self.model.predict_proba(input_x, *args, **kwargs)
-        if self.is_fit_by_class:
-            output = self.calibrater.predict_proba(output)
-        else:
-            shape  = output.shape[-1]
-            output = self.to_binary_shape(output)
-            output = self.calibrater.predict_proba(output)
-            output = output[:, -1].reshape(-1, shape)
+        output = self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict", **kwargs)
+        logger.info("END")
+        return output
+
+    def predict_proba(self, input_x, *args, is_mock: bool=False, **kwargs):
+        logger.info("START")
+        output = self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
         logger.info("END")
         return output
 
