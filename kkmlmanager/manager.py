@@ -61,6 +61,8 @@ class MLManager:
         self.model_class  = None
         self.model_args   = None
         self.model_kwargs = None
+        self.model_multi  = None
+        self.is_cvmodel   = False
         self.calibrater   = None
         self.is_fit       = False
         self.is_calib     = False
@@ -84,6 +86,10 @@ class MLManager:
             ins.model_class  = copy.deepcopy(self.model_class)
             ins.model_args   = copy.deepcopy(self.model_args)
             ins.model_kwargs = copy.deepcopy(self.model_kwargs)
+            ins.model_multi  = copy.deepcopy(self.model_multi)
+            ins.is_cvmodel   = self.is_cvmodel
+            if ins.is_cvmodel: ins.model       = None
+            else:              ins.model_multi = None
             ins.calibrater   = copy.deepcopy(self.calibrater)
             ins.is_fit       = self.is_fit
             ins.is_calib     = self.is_calib
@@ -107,10 +113,12 @@ class MLManager:
     
     def reset_model(self):
         self.logger.info("START")
-        self.model      = self.model_class(*self.model_args, **self.model_kwargs)
-        self.calibrater = None
-        self.is_fit     = False
-        self.is_calib   = False
+        self.model       = self.model_class(*self.model_args, **self.model_kwargs)
+        self.model_multi = None
+        self.is_cvmodel  = False
+        self.calibrater  = None
+        self.is_fit      = False
+        self.is_calib    = False
         self.logger.info("END")
 
     def update_features(self, features: Union[List[str], np.ndarray]):
@@ -339,10 +347,11 @@ class MLManager:
         self.logger.info("START")
         assert len(self.list_cv) > 0
         self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv])
+        self.is_cvmodel = True
         self.logger.info("END")
     
     def get_model(self, calib: bool=True):
-        if hasattr(self, "model_multi"):
+        if self.is_cvmodel:
             model_mode = "model_multi"
         else:
             model_mode = "model"
