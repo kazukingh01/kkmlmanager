@@ -547,7 +547,7 @@ class MultiModel:
             if self.classes_ is not None:
                 assert np.all(self.classes_ == model.classes_)
         self.models = models
-    def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict"):
+    def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict", **kwargs):
         assert isinstance(input, np.ndarray)
         if weight is None: weight = [1.0] * len(self.models)
         assert check_type_list(weight, float)
@@ -555,18 +555,18 @@ class MultiModel:
         output = None
         for i, model in enumerate(self.models):
             logger.info(f"predict model {i}")
-            _output = getattr(model, funcname)(input) * weight[i]
+            _output = getattr(model, funcname)(input, **kwargs) * weight[i]
             if output is None: output  = _output
             else:              output += _output
         output = output / sum(weight)
         return output
-    def predict(self, input: np.ndarray, weight: List[float]=None):
+    def predict(self, input: np.ndarray, weight: List[float]=None, **kwargs):
         logger.info("START")
-        output = self.predict_common(input, weight=weight, funcname="predict")
+        output = self.predict_common(input, weight=weight, funcname="predict", **kwargs)
         logger.info("END")
         return output
-    def predict_proba(self, input: np.ndarray, weight: List[float]=None):
+    def predict_proba(self, input: np.ndarray, weight: List[float]=None, **kwargs):
         logger.info("START")
-        output = self.predict_common(input, weight=weight, funcname="predict_proba")
+        output = self.predict_common(input, weight=weight, funcname="predict_proba", **kwargs)
         logger.info("END")
         return output
