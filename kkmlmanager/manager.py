@@ -93,6 +93,9 @@ class MLManager:
             ins.calibrater   = copy.deepcopy(self.calibrater)
             ins.is_fit       = self.is_fit
             ins.is_calib     = self.is_calib
+            if ins.is_calib:
+                ins.model       = None
+                ins.model_multi = None
             ins.list_cv      = copy.deepcopy(self.list_cv)
             ins.columns_hist = copy.deepcopy(self.columns_hist)
             ins.columns      = self.columns.copy()
