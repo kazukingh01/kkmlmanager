@@ -64,10 +64,16 @@ class Calibrater:
         if self.is_fit_by_class:
             self.calibrater.fit(input_x, input_y, *args, **kwargs)
         else:
-            input_x = input_x.copy().reshape(-1)
+            input_x = self.to_binary_shape(input_x.copy())
             input_y = np.eye(classes.shape[0])[input_y.astype(int)].reshape(-1)
             self.calibrater.fit(input_x, input_y, *args, **kwargs)
         logger.info("END")
+    
+    @classmethod
+    def to_binary_shape(cls, ndf: np.ndarray):
+        ndf = ndf.reshape(-1)
+        ndf = np.stack([1 - ndf, ndf]).T
+        return ndf
     
     def predict(self, input_x, *args, **kwargs):
         """
@@ -79,8 +85,9 @@ class Calibrater:
             output = self.calibrater.predict(output)
         else:
             shape  = output.shape[-1]
-            output = self.calibrater.predict(output.reshape(-1))
-            output = output.reshape(-1, shape)
+            output = self.to_binary_shape(output)
+            output = self.calibrater.predict(output)
+            output = output[:, -1].reshape(-1, shape)
         logger.info("END")
         return output
 
@@ -94,8 +101,9 @@ class Calibrater:
             output = self.calibrater.predict_proba(output)
         else:
             shape  = output.shape[-1]
-            output = self.calibrater.predict_proba(output.reshape(-1))
-            output = output.reshape(-1, shape)
+            output = self.to_binary_shape(output)
+            output = self.calibrater.predict_proba(output)
+            output = output[:, -1].reshape(-1, shape)
         logger.info("END")
         return output
 
