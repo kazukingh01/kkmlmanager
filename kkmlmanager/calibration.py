@@ -75,7 +75,7 @@ class Calibrater:
         ndf = np.stack([1 - ndf, ndf]).T
         return ndf
     
-    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict", **kwargs)
+    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict", **kwargs):
         """
         'input_x' is Features. is not Probability ( If is_mock == False ).
         """
