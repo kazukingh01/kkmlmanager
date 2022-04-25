@@ -455,7 +455,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10):
+    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10, is_fit_by_class: bool=True):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -463,7 +463,7 @@ class MLManager:
             assert len(self.list_cv) > 0
         else:
             assert isinstance(df_calib, pd.DataFrame)
-        calibrater = Calibrater(self.get_model(calib=False))
+        calibrater = Calibrater(self.get_model(calib=False), is_fit_by_class=is_fit_by_class)
         # fitting
         input_x, input_y = None, None
         if df_calib is None:

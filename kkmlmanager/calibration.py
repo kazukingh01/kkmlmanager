@@ -9,6 +9,7 @@ logger = set_logger(__name__)
 
 
 __all__ = [
+    "MockCalibrater",
     "Calibrater",
     "calibration_curve_plot",
 ]
@@ -34,13 +35,15 @@ class MockCalibrater(BaseEstimator):
 
 
 class Calibrater:
-    def __init__(self, model):
+    def __init__(self, model, is_fit_by_class: bool=True):
         logger.info("START")
         assert hasattr(model, "predict")
         assert hasattr(model, "predict_proba")
+        assert isinstance(is_fit_by_class, bool)
         self.model      = model
         self.mock       = None
         self.calibrater = None
+        self.is_fit_by_class = is_fit_by_class
         logger.info("END")
 
     def __str__(self):
@@ -54,16 +57,26 @@ class Calibrater:
         classes = self.model.classes_ if hasattr(self.model, "classes_") else np.sort(np.unique(input_y))
         self.mock       = MockCalibrater(classes=classes)
         self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
-        self.calibrater.fit(input_x, input_y, *args, **kwargs)
+        if self.is_fit_by_class:
+            self.calibrater.fit(input_x, input_y, *args, **kwargs)
+        else:
+            input_x = input_x.copy().reshape(-1)
+            input_y = np.eye(classes)[input_y.astype(int)].reshape(-1)
+            self.calibrater.fit(input_x, input_y, *args, **kwargs)
         logger.info("END")
-
+    
     def predict(self, input_x, *args, **kwargs):
         """
         'input_x' is Features. is not Probability.
         """
         logger.info("START")
         output = self.model.predict(input_x, *args, **kwargs)
-        output = self.calibrater.predict(output)
+        if self.is_fit_by_class:
+            output = self.calibrater.predict(output)
+        else:
+            shape  = output.shape[-1]
+            output = self.calibrater.predict(output.reshape(-1))
+            output = output.reshape(-1, shape)
         logger.info("END")
         return output
 
@@ -73,7 +86,12 @@ class Calibrater:
         """
         logger.info("START")
         output = self.model.predict_proba(input_x, *args, **kwargs)
-        output = self.calibrater.predict_proba(output)
+        if self.is_fit_by_class:
+            output = self.calibrater.predict_proba(output)
+        else:
+            shape  = output.shape[-1]
+            output = self.calibrater.predict_proba(output.reshape(-1))
+            output = output.reshape(-1, shape)
         logger.info("END")
         return output
 
