@@ -56,7 +56,10 @@ class Calibrater:
         logger.info("START")
         classes = self.model.classes_ if hasattr(self.model, "classes_") else np.sort(np.unique(input_y))
         assert classes.shape[0] == (classes.max() + 1)
-        self.mock       = MockCalibrater(classes=classes)
+        if self.is_fit_by_class:
+            self.mock = MockCalibrater(classes=classes)
+        else:
+            self.mock = MockCalibrater(classes=np.array([0, 1]))
         self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
         if self.is_fit_by_class:
             self.calibrater.fit(input_x, input_y, *args, **kwargs)
