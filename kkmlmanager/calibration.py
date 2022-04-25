@@ -55,13 +55,14 @@ class Calibrater:
         """
         logger.info("START")
         classes = self.model.classes_ if hasattr(self.model, "classes_") else np.sort(np.unique(input_y))
+        assert classes.shape[0] == (classes.max() + 1)
         self.mock       = MockCalibrater(classes=classes)
         self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
         if self.is_fit_by_class:
             self.calibrater.fit(input_x, input_y, *args, **kwargs)
         else:
             input_x = input_x.copy().reshape(-1)
-            input_y = np.eye(classes)[input_y.astype(int)].reshape(-1)
+            input_y = np.eye(classes.shape[0])[input_y.astype(int)].reshape(-1)
             self.calibrater.fit(input_x, input_y, *args, **kwargs)
         logger.info("END")
     
