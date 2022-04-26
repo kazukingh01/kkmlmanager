@@ -337,12 +337,12 @@ class MLManager:
         self.proc_ans.is_check = True
         self.logger.info("END")
     
-    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
+    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
         self.logger.info("START")
         assert is_exp
         input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
-        output = self.get_model().predict_proba(input_x)
+        output = self.get_model().predict_proba(input_x, **kwargs)
         self.logger.info("END")
         return output, input_y, input_index
     
