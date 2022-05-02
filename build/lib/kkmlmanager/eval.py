@@ -44,11 +44,19 @@ def predict_model(model, input: np.ndarray, **kwargs):
     logger.info("END")
     return df
 
-def eval_model(model, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=False, **kwargs):
+def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: bool=False, **kwargs):
     logger.info("START")
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
-    df = predict_model(model, input_x, **kwargs)
+    if model is None:
+        if is_reg:
+            assert len(input_x.shape) == 1
+            df = pd.DataFrame(input_x, columns=["predict"]) 
+        else:
+            assert len(input_x.shape) == 2
+            df = pd.DataFrame(input_x, columns=[f"predict_proba_{i}" for i in range(input_x.shape[1])]) 
+    else:
+        df = predict_model(model, input_x, **kwargs)
     se = pd.Series(dtype=object)
     if is_reg:
         assert len(input_y.shape) == 1

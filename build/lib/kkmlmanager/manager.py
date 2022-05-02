@@ -368,7 +368,10 @@ class MLManager:
     ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
-        if df_valid is None: assert isinstance(df_valid, pd.DataFrame)
+        if df_valid is not None: assert isinstance(df_valid, pd.DataFrame)
+        for x in self.columns_otr:
+            assert np.any(df_train.columns == x)
+            if df_valid is not None: assert np.any(df_valid.columns == x)
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
         assert isinstance(is_eval_train, bool)
@@ -396,18 +399,22 @@ class MLManager:
         self.logger.info("evaluate model.")
         if valid_x is not None:
             self.logger.info("evaluate valid.")
-            se_eval, df_eval = eval_model(self.model, valid_x, valid_y, is_reg=self.is_reg)
+            se_eval, df_eval = eval_model(valid_x, valid_y, model=self.model, is_reg=self.is_reg)
             self.eval_valid_se = se_eval.copy()
             self.eval_valid_df = df_eval.copy()
             self.eval_valid_df["index"] = valid_index
+            for x in self.columns_otr:
+                self.eval_valid_df[f"otr_{x}"] = df_valid.loc[valid_index, x].copy().values
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_eval_train:
             self.logger.info("evaluate train.")
-            se_eval, df_eval = eval_model(self.model, train_x, train_y, is_reg=self.is_reg)
+            se_eval, df_eval = eval_model(train_x, train_y, model=self.model, is_reg=self.is_reg)
             self.eval_train_se = se_eval.copy()
             self.eval_train_df = df_eval.copy()
             self.eval_train_df["index"] = train_index
+            for x in self.columns_otr:
+                self.eval_train_df[f"otr_{x}"] = df_train.loc[train_index, x].copy().values
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         self.logger.info("END")
@@ -467,7 +474,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, n_bins: int=10, is_fit_by_class: bool=True):
+    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -481,7 +488,9 @@ class MLManager:
         if df_calib is None:
             df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in self.list_cv], axis=0, ignore_index=True, sort=False)
             input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
-            input_y = df.loc[:, df.columns == "answer"].values.reshape(-1)
+            if columns_ans is None: columns_ans = "answer"
+            assert isinstance(columns_ans, str)
+            input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1)
         else:
             input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
         self.logger.info("calibration start...")
@@ -493,11 +502,13 @@ class MLManager:
         self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         self.logger.info("END")
 
-    def evaluate(self, df_test: pd.DataFrame, is_store: bool=False):
+    def evaluate(self, df_test: pd.DataFrame, columns_ans: str=None, is_store: bool=False, **kwargs):
         self.logger.info("START")
         assert isinstance(is_store, bool)
+        if columns_ans is not None: assert isinstance(columns_ans, str)
         test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=True)
-        se_eval, df_eval = eval_model(self.get_model(), test_x, test_y, is_reg=self.is_reg)
+        if columns_ans is not None: test_y = df_test.loc[test_index, columns_ans].values.copy()
+        se_eval, df_eval = eval_model(test_x, test_y, model=self.get_model(), is_reg=self.is_reg, **kwargs)
         for x in se_eval.index:
             self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_store:

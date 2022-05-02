@@ -40,6 +40,7 @@ class Calibrater:
         assert hasattr(model, "predict")
         assert hasattr(model, "predict_proba")
         assert isinstance(is_fit_by_class, bool)
+        logger.info(f"model: {model}, is_fit_by_class: {is_fit_by_class}")
         self.model      = model
         self.mock       = None
         self.calibrater = None
@@ -84,6 +85,7 @@ class Calibrater:
             output = input_x
         else:
             output = getattr(self.model, funcname)(input_x, *args, **kwargs)
+        logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}")
         if self.is_fit_by_class:
             output = getattr(self.calibrater, funcname)(output)
         else:
