@@ -307,7 +307,8 @@ class MLManager:
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
-        df = df[self.columns.tolist() + self.columns_ans.tolist()].copy()
+        self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
+        df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr.tolist()].copy()
         df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
         if is_exp == False and is_ans == False: return df
         output_x = self.proc_exp.fit(df[self.columns    ], check_inout=["row"]) if is_exp else None
@@ -320,6 +321,7 @@ class MLManager:
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
+        self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
         if is_row:
             df = self.proc_row(df)
         if is_exp == False and is_ans == False: return df
@@ -461,7 +463,7 @@ class MLManager:
             self.logger.info(f"cross validation : {i_cv} / {n_cv} start...")
             self.reset_model()
             self.fit(
-                df_train=df_train.iloc[index_train], df_valid=df_train.iloc[index_valid],
+                df_train=df_train.iloc[index_train, :], df_valid=df_train.iloc[index_valid, :],
                 is_proc_fit=is_proc_fit_every_cv, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
                 is_eval_train=False
             )
@@ -474,7 +476,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True):
+    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True, is_cvmode: bool=False):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -482,20 +484,32 @@ class MLManager:
             assert len(self.list_cv) > 0
         else:
             assert isinstance(df_calib, pd.DataFrame)
-        calibrater = Calibrater(self.get_model(calib=False), is_fit_by_class=is_fit_by_class)
-        # fitting
-        input_x, input_y = None, None
-        if df_calib is None:
-            df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in self.list_cv], axis=0, ignore_index=True, sort=False)
-            input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
-            if columns_ans is None: columns_ans = "answer"
-            assert isinstance(columns_ans, str)
-            input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1)
+        if is_cvmode:
+            assert len(self.list_cv) > 0
+            assert df_calib is None
+            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), is_fit_by_class=is_fit_by_class) for i in self.list_cv])
+            for i, i_cv in enumerate(self.list_cv):
+                df = getattr(self, f"eval_valid_df_cv{i_cv}").copy()
+                input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
+                if columns_ans is None: columns_ans = "answer"
+                assert isinstance(columns_ans, str) and np.any(df.columns == columns_ans)
+                input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1).astype(int)
+                calibrater.models[i].fit(input_x, input_y)
         else:
-            input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
-        self.logger.info("calibration start...")
-        calibrater.fit(input_x, input_y)
-        self.logger.info("calibration end...")
+            calibrater = Calibrater(self.get_model(calib=False), is_fit_by_class=is_fit_by_class)
+            # fitting
+            input_x, input_y = None, None
+            if df_calib is None:
+                df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in self.list_cv], axis=0, ignore_index=True, sort=False)
+                input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
+                if columns_ans is None: columns_ans = "answer"
+                assert isinstance(columns_ans, str) and np.any(df.columns == columns_ans)
+                input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1).astype(int)
+            else:
+                input_x, input_y, _ = self.predict(df_calib, is_row=False, is_exp=True, is_ans=True)
+            self.logger.info("calibration start...")
+            calibrater.fit(input_x, input_y)
+            self.logger.info("calibration end...")
         self.calibrater = calibrater
         output          = self.calibrater.predict_proba(input_x, is_mock=True)
         self.is_calib   = True
