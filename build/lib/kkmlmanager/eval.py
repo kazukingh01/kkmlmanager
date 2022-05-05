@@ -33,7 +33,10 @@ def predict_model(model, input: np.ndarray, **kwargs):
             output = model.predict_proba(input, **kwargs)
             assert isinstance(output, np.ndarray)
             assert len(output.shape) == 2
-            ndf_class = model.classes_ if hasattr(model, "classes_") else np.arange(output.shape[1])
+            if hasattr(model, "classes_") and isinstance(model.classes_, np.ndarray):
+                ndf_class = model.classes_ 
+            else:
+                ndf_class = np.arange(output.shape[1])
             df[[f"predict_proba_{i}" for i in ndf_class.astype(int)]] = output
             df["predict"] = np.argmax(output, axis=1)
         else:
@@ -72,7 +75,7 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
             df["answer"] = np.argmax(input_y, axis=1)
             df[[f"answer_{i}" for i in range(input_y.shape[1])]] = input_y
         n_class    = df.columns.str.contains("^predict_proba_", regex=True).sum()
-        ndf_class  = model.classes_ if hasattr(model, "classes_") else np.arange(n_class)
+        ndf_class  = model.classes_ if (hasattr(model, "classes_") and isinstance(model.classes_, np.ndarray)) else np.arange(n_class)
         dict_class = {x:i for i, x in enumerate(ndf_class)}
         ndf_pred   = df[[f"predict_proba_{i_class}" for i_class in ndf_class]].values
         if len(input_y.shape) == 1:
