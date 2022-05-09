@@ -94,6 +94,7 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         for i, i_class in dict_class.items():
             se[f"auc_{i_class}"] = roc_auc_score(input_y_argmax[:, i], ndf_pred[:, i])
         weight = np.bincount(input_y_class, minlength=n_class)
-        se[f"auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
+        se["auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
+        se["auc_all"]   = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
     logger.info("END")
     return se, df
