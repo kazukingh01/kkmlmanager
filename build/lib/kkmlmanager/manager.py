@@ -308,10 +308,10 @@ class MLManager:
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
         self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
-        df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr.tolist()].copy()
+        df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr[~np.isin(self.columns_otr, self.columns_ans)].tolist()].copy()
         df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
         if is_exp == False and is_ans == False: return df
-        output_x = self.proc_exp.fit(df[self.columns    ], check_inout=["row"]) if is_exp else None
+        output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"]) if is_exp else None
         output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"]) if is_ans else None
         self.logger.info("END")
         return output_x, output_y, df.index
@@ -445,7 +445,7 @@ class MLManager:
         if n_split is not None:
             indexes_train, indexes_valid = [], []
             splitter = StratifiedKFold(n_splits=n_split)
-            _, ndf_y, _ = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=True)
+            _, ndf_y, _ = self.proc_fit(df_train, is_row=False, is_exp=False, is_ans=True)
             try:
                 for index_train, index_test in splitter.split(np.arange(df_train.shape[0], dtype=int), ndf_y):
                     indexes_train.append(index_train)
@@ -520,7 +520,7 @@ class MLManager:
         self.logger.info("START")
         assert isinstance(is_store, bool)
         if columns_ans is not None: assert isinstance(columns_ans, str)
-        test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=True)
+        test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=(True if columns_ans is None else False))
         if columns_ans is not None: test_y = df_test.loc[test_index, columns_ans].values.copy()
         se_eval, df_eval = eval_model(test_x, test_y, model=self.get_model(), is_reg=self.is_reg, **kwargs)
         for x in se_eval.index:

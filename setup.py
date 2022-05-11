@@ -10,7 +10,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='kkmlmanager',
-    version='1.0.2',
+    version='1.0.3',
     description='my object detection library.',
     long_description=long_description,
     long_description_content_type="text/markdown",
