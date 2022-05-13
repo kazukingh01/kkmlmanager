@@ -592,7 +592,7 @@ class MultiModel:
             if self.classes_ is not None:
                 assert np.all(self.classes_ == model.classes_)
         self.models = models
-        if func_predict is not None and func_predict is not in ["predict", "predict_proba"]:
+        if (func_predict is not None) and (func_predict not in ["predict", "predict_proba"]):
             setattr(
                 self, func_predict, 
                 lambda input, weight=None, **kwargs: self.predict_common(input, weight=weight, funcname=func_predict, **kwargs)
