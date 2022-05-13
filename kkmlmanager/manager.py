@@ -1,7 +1,6 @@
 import sys, pickle, os, copy
 import numpy as np
 import pandas as pd
-from scipy import stats
 from typing import List, Union
 from sklearn.model_selection import StratifiedKFold
 
@@ -27,7 +26,7 @@ class MLManager:
     def __init__(
         self,
         # model parameter
-        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_otr: List[str]=None, is_reg: bool=False,
+        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_otr: List[str]=None, is_reg: bool=False, 
         # common parameter
         outdir: str="./output/", random_seed: int=1, n_jobs: int=1
     ):
@@ -86,6 +85,7 @@ class MLManager:
             ins.model_class  = copy.deepcopy(self.model_class)
             ins.model_args   = copy.deepcopy(self.model_args)
             ins.model_kwargs = copy.deepcopy(self.model_kwargs)
+            ins.model_func   = copy.deepcopy(self.model_func)
             ins.model_multi  = copy.deepcopy(self.model_multi)
             ins.is_cvmodel   = self.is_cvmodel
             if ins.is_cvmodel: ins.model       = None
@@ -106,11 +106,16 @@ class MLManager:
         else:
             return copy.deepcopy(self)
 
-    def set_model(self, model, *args, **kwargs):
+    def set_model(self, model, *args, model_func_predict: str=None, **kwargs):
         self.logger.info("START")
         self.model_class  = model
         self.model_args   = args
         self.model_kwargs = kwargs
+        if model_func_predict is None:
+            if self.is_reg: model_func_predict = "predict"
+            else:           model_func_predict = "predict_proba"
+        assert isinstance(model_func_predict, str)
+        self.model_func   = model_func_predict
         self.reset_model()
         self.logger.info("END")
     
@@ -344,14 +349,14 @@ class MLManager:
         assert is_exp
         input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
-        output = self.get_model().predict_proba(input_x, **kwargs)
+        output = getattr(self.get_model(), self.model_func)(input_x, **kwargs)
         self.logger.info("END")
         return output, input_y, input_index
     
     def set_cvmodel(self):
         self.logger.info("START")
         assert len(self.list_cv) > 0
-        self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv])
+        self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
@@ -401,7 +406,7 @@ class MLManager:
         self.logger.info("evaluate model.")
         if valid_x is not None:
             self.logger.info("evaluate valid.")
-            se_eval, df_eval = eval_model(valid_x, valid_y, model=self.model, is_reg=self.is_reg)
+            se_eval, df_eval = eval_model(valid_x, valid_y, model=self.model, func_predict=self.model_func, is_reg=self.is_reg)
             self.eval_valid_se = se_eval.copy()
             self.eval_valid_df = df_eval.copy()
             self.eval_valid_df["index"] = valid_index
@@ -411,7 +416,7 @@ class MLManager:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_eval_train:
             self.logger.info("evaluate train.")
-            se_eval, df_eval = eval_model(train_x, train_y, model=self.model, is_reg=self.is_reg)
+            se_eval, df_eval = eval_model(train_x, train_y, model=self.model, func_predict=self.model_func, is_reg=self.is_reg)
             self.eval_train_se = se_eval.copy()
             self.eval_train_df = df_eval.copy()
             self.eval_train_df["index"] = train_index
@@ -487,7 +492,7 @@ class MLManager:
         if is_cvmode:
             assert len(self.list_cv) > 0
             assert df_calib is None
-            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), is_fit_by_class=is_fit_by_class) for i in self.list_cv])
+            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class) for i in self.list_cv])
             for i, i_cv in enumerate(self.list_cv):
                 df = getattr(self, f"eval_valid_df_cv{i_cv}").copy()
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
@@ -496,7 +501,7 @@ class MLManager:
                 input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1).astype(int)
                 calibrater.models[i].fit(input_x, input_y)
         else:
-            calibrater = Calibrater(self.get_model(calib=False), is_fit_by_class=is_fit_by_class)
+            calibrater = Calibrater(self.get_model(calib=False), self.model_func, is_fit_by_class=is_fit_by_class)
             # fitting
             input_x, input_y = None, None
             if df_calib is None:
@@ -511,7 +516,7 @@ class MLManager:
             calibrater.fit(input_x, input_y)
             self.logger.info("calibration end...")
         self.calibrater = calibrater
-        output          = self.calibrater.predict_proba(input_x, is_mock=True)
+        output          = getattr(self.calibrater, self.model_func)(input_x, is_mock=True)
         self.is_calib   = True
         self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         self.logger.info("END")
@@ -522,7 +527,7 @@ class MLManager:
         if columns_ans is not None: assert isinstance(columns_ans, str)
         test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=(True if columns_ans is None else False))
         if columns_ans is not None: test_y = df_test.loc[test_index, columns_ans].values.copy()
-        se_eval, df_eval = eval_model(test_x, test_y, model=self.get_model(), is_reg=self.is_reg, **kwargs)
+        se_eval, df_eval = eval_model(test_x, test_y, model=self.get_model(), is_reg=self.is_reg, func_predict=self.model_func, **kwargs)
         for x in se_eval.index:
             self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_store:
@@ -575,16 +580,27 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
 
 
 class MultiModel:
-    def __init__(self, models: List[object]):
+    def __init__(self, models: List[object], func_predict: str=None):
         assert isinstance(models, list) and len(models) > 0
         self.classes_ = models[0].classes_ if hasattr(models[0], "classes_") else None
         for model in models:
-            assert hasattr(model, "predict")
-            assert hasattr(model, "predict_proba")
+            if func_predict is None:
+                assert hasattr(model, "predict")
+                assert hasattr(model, "predict_proba")
+            else:
+                assert hasattr(model, func_predict)
             if self.classes_ is not None:
                 assert np.all(self.classes_ == model.classes_)
         self.models = models
+        if func_predict is not None:
+            setattr(
+                self, func_predict, 
+                lambda input, weight=None, **kwargs: self.predict_common(input, weight=weight, funcname=func_predict, **kwargs)
+            )
+        self.func_predict = func_predict
     def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict", **kwargs):
+        logger.info("START")
+        logger.info(f"func predict name: {funcname}")
         assert isinstance(input, np.ndarray)
         if weight is None: weight = [1.0] * len(self.models)
         assert check_type_list(weight, float)
@@ -596,14 +612,9 @@ class MultiModel:
             if output is None: output  = _output
             else:              output += _output
         output = output / sum(weight)
+        logger.info("END")
         return output
     def predict(self, input: np.ndarray, weight: List[float]=None, **kwargs):
-        logger.info("START")
-        output = self.predict_common(input, weight=weight, funcname="predict", **kwargs)
-        logger.info("END")
-        return output
+        return self.predict_common(input, weight=weight, funcname="predict", **kwargs)
     def predict_proba(self, input: np.ndarray, weight: List[float]=None, **kwargs):
-        logger.info("START")
-        output = self.predict_common(input, weight=weight, funcname="predict_proba", **kwargs)
-        logger.info("END")
-        return output
+        return self.predict_common(input, weight=weight, funcname="predict_proba", **kwargs)

@@ -35,16 +35,22 @@ class MockCalibrater(BaseEstimator):
 
 
 class Calibrater:
-    def __init__(self, model, is_fit_by_class: bool=True):
+    def __init__(self, model, func_predict: str, is_fit_by_class: bool=True):
         logger.info("START")
-        assert hasattr(model, "predict")
-        assert hasattr(model, "predict_proba")
+        assert isinstance(func_predict, str)
+        assert hasattr(model, func_predict)
         assert isinstance(is_fit_by_class, bool)
         logger.info(f"model: {model}, is_fit_by_class: {is_fit_by_class}")
         self.model      = model
         self.mock       = None
         self.calibrater = None
         self.is_fit_by_class = is_fit_by_class
+        self.func_predict    = func_predict
+        if func_predict is not None:
+            setattr(
+                self, func_predict, 
+                lambda input_x, *args, is_mock: bool=False, **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
+            )
         logger.info("END")
 
     def __str__(self):
@@ -81,10 +87,11 @@ class Calibrater:
         'input_x' is Features. is not Probability ( If is_mock == False ).
         """
         logger.info("START")
+        logger.info(f"is_mock: {is_mock}, funcname: {funcname}")
         if is_mock:
             output = input_x
         else:
-            output = getattr(self.model, funcname)(input_x, *args, **kwargs)
+            output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
         logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}")
         if self.is_fit_by_class:
             output = getattr(self.calibrater, funcname)(output)
@@ -97,16 +104,10 @@ class Calibrater:
         return output
     
     def predict(self, input_x, *args, is_mock: bool=False, **kwargs):
-        logger.info("START")
-        output = self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict", **kwargs)
-        logger.info("END")
-        return output
+        return self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict", **kwargs)
 
     def predict_proba(self, input_x, *args, is_mock: bool=False, **kwargs):
-        logger.info("START")
-        output = self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
-        logger.info("END")
-        return output
+        return self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
 
 
 def calibration_curve_plot(prob_pre: np.ndarray, prob_aft: np.ndarray, target: np.ndarray, n_bins: int=10, figsize: tuple=(12, 8)):
