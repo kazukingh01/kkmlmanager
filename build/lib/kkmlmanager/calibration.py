@@ -46,11 +46,10 @@ class Calibrater:
         self.calibrater = None
         self.is_fit_by_class = is_fit_by_class
         self.func_predict    = func_predict
-        if func_predict is not None:
-            setattr(
-                self, func_predict, 
-                lambda input_x, *args, is_mock: bool=False, **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
-            )
+        setattr(
+            self, func_predict, 
+            lambda input_x, *args, is_mock: bool=False, funcname: str="predict_proba", **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname=funcname, **kwargs)
+        )
         logger.info("END")
 
     def __str__(self):
@@ -82,7 +81,7 @@ class Calibrater:
         ndf = np.stack([1 - ndf, ndf]).T
         return ndf
     
-    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict", **kwargs):
+    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict_proba", **kwargs):
         """
         'input_x' is Features. is not Probability ( If is_mock == False ).
         """
@@ -102,12 +101,6 @@ class Calibrater:
             output = output[:, -1].reshape(-1, shape)
         logger.info("END")
         return output
-    
-    def predict(self, input_x, *args, is_mock: bool=False, **kwargs):
-        return self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict", **kwargs)
-
-    def predict_proba(self, input_x, *args, is_mock: bool=False, **kwargs):
-        return self.predict_common(input_x, *args, is_mock=is_mock, funcname="predict_proba", **kwargs)
 
 
 def calibration_curve_plot(prob_pre: np.ndarray, prob_aft: np.ndarray, target: np.ndarray, n_bins: int=10, figsize: tuple=(12, 8)):
