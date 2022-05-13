@@ -48,7 +48,7 @@ class Calibrater:
         self.func_predict    = func_predict
         setattr(
             self, func_predict, 
-            lambda input_x, *args, is_mock: bool=False, funcname: str="predict_proba", **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname=funcname, **kwargs)
+            lambda input_x, *args, is_mock=False, funcname="predict_proba", **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname=funcname, **kwargs)
         )
         logger.info("END")
 
