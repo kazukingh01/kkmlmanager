@@ -37,8 +37,12 @@ def predict_model(model, input: np.ndarray, func_predict: str=None, **kwargs):
     if len(output.shape) == 2:
         if hasattr(model, "classes_") and isinstance(model.classes_, np.ndarray):
             ndf_class = model.classes_ 
+            if ndf_class.shape[0] != output.shape[-1]:
+                logger.warning(f"shape is different. output: {output.shape}, model.classes_: {ndf_class.shape}")
+                ndf_class = np.arange(output.shape[1])
         else:
             ndf_class = np.arange(output.shape[1])
+        assert int(ndf_class.sum()) == int(np.arange(ndf_class.shape[0]).sum()) # allow [0, 1, 2, ...]. Don't allow [0, 2, 3, ...]
         df[[f"predict_proba_{i}" for i in ndf_class.astype(int)]] = output
         df["predict"] = np.argmax(output, axis=1)
     else:
@@ -68,18 +72,18 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         se["mae"]  = (np.abs(input_y - df["predict"].values)).sum() / input_y.shape[0]
     else:
         assert len(input_y.shape) in [1,2]
+        n_class  = df.columns.str.contains("^predict_proba_", regex=True).sum()
+        ndf_pred = df[[f"predict_proba_{i_class}" for i_class in np.arange(n_class, dtype=int)]].values
         if len(input_y.shape) == 1:
             df["answer"] = input_y
         else:
+            if ndf_pred.shape[-1] < input_y.shape[-1]:
+                logger.warning(f"shape is different. output: {ndf_pred.shape}, answer: {input_y.shape}")
+                input_y = input_y[:, :ndf_pred.shape[-1]]
             df["answer"] = np.argmax(input_y, axis=1)
             df[[f"answer_{i}" for i in range(input_y.shape[1])]] = input_y
-        n_class    = df.columns.str.contains("^predict_proba_", regex=True).sum()
-        ndf_class  = model.classes_ if (hasattr(model, "classes_") and isinstance(model.classes_, np.ndarray)) else np.arange(n_class)
-        dict_class = {x:i for i, x in enumerate(ndf_class)}
-        ndf_pred   = df[[f"predict_proba_{i_class}" for i_class in ndf_class]].values
         if len(input_y.shape) == 1:
-            input_y = np.vectorize(lambda x: dict_class.get(x))(input_y.copy()).astype(int)
-            input_y = np.eye(n_class)[input_y]
+            input_y = np.eye(n_class)[input_y.astype(int)]
         assert ndf_pred.shape == input_y.shape
         ndf_pred       = np.clip(ndf_pred, 1e-10, 1)
         input_y_class  = np.argmax(input_y, axis=1)
@@ -90,8 +94,8 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         for i in range(1, n_class+1):
             strlen=len(str(n_class))
             se[f"acc_top{str(i).zfill(strlen)}"] = accuracy_top_k(input_y_class, ndf_pred, top_k=i)
-        for i, i_class in dict_class.items():
-            se[f"auc_{i_class}"] = roc_auc_score(input_y_argmax[:, i], ndf_pred[:, i])
+        for i in np.arange(n_class):
+            se[f"auc_{i}"] = roc_auc_score(input_y_argmax[:, i], ndf_pred[:, i])
         weight = np.bincount(input_y_class, minlength=n_class)
         se["auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
         se["auc_all"]   = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
