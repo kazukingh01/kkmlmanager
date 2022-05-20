@@ -5,3 +5,4 @@ from kkmlmanager import features
 from kkmlmanager import eval
 from kkmlmanager import util
 from kkmlmanager import calibration
+from kkmlmanager import sampling

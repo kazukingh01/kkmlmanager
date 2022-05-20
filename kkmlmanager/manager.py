@@ -1,4 +1,5 @@
 import sys, pickle, os, copy
+from functools import partial
 import numpy as np
 import pandas as pd
 from typing import List, Union
@@ -492,7 +493,7 @@ class MLManager:
         if is_cvmode:
             assert len(self.list_cv) > 0
             assert df_calib is None
-            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class) for i in self.list_cv])
+            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class) for i in self.list_cv], func_predict=self.model_func)
             for i, i_cv in enumerate(self.list_cv):
                 df = getattr(self, f"eval_valid_df_cv{i_cv}").copy()
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
@@ -594,8 +595,7 @@ class MultiModel:
         self.models = models
         if (func_predict is not None) and (func_predict not in ["predict", "predict_proba"]):
             setattr(
-                self, func_predict, 
-                lambda input, weight=None, **kwargs: self.predict_common(input, weight=weight, funcname=func_predict, **kwargs)
+                self, func_predict, partial(self.predict_common, funcname=func_predict)
             )
         self.func_predict = func_predict
     def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict", **kwargs):

@@ -1,5 +1,6 @@
 from typing import List
 import numpy as np
+from functools import partial
 from sklearn.base import BaseEstimator
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 import matplotlib.pyplot as plt
@@ -47,8 +48,7 @@ class Calibrater:
         self.is_fit_by_class = is_fit_by_class
         self.func_predict    = func_predict
         setattr(
-            self, func_predict, 
-            lambda input_x, *args, is_mock=False, funcname="predict_proba", **kwargs: self.predict_common(input_x, *args, is_mock=is_mock, funcname=funcname, **kwargs)
+            self, func_predict, partial(self.predict_common, is_mock=False, funcname="predict_proba")
         )
         logger.info("END")
 
@@ -86,7 +86,7 @@ class Calibrater:
         'input_x' is Features. is not Probability ( If is_mock == False ).
         """
         logger.info("START")
-        logger.info(f"is_mock: {is_mock}, funcname: {funcname}")
+        logger.info(f"is_mock: {is_mock}, func_predict: {self.func_predict}, funcname: {funcname}")
         if is_mock:
             output = input_x
         else:
