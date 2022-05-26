@@ -1,4 +1,4 @@
-import os, shutil
+import os, shutil, pickle
 from typing import List, Union
 
 
@@ -7,6 +7,8 @@ __all__ = [
     "check_type",
     "check_type_list",
     "correct_dirpath",
+    "save_pickle",
+    "load_pickle",
 ]
 
 
@@ -51,3 +53,12 @@ def correct_dirpath(dirpath: str) -> str:
         return dirpath if dirpath[-1] == "\\" else (dirpath + "\\")
     else:
         return dirpath if dirpath[-1] == "/" else (dirpath + "/")
+
+def save_pickle(obj: object, filepath: str, *args, **kwargs):
+    with open(filepath, mode='wb') as f:
+        pickle.dump(obj, f, *args, **kwargs)
+
+def load_pickle(filepath: str, *args, **kwargs) -> object:
+    with open(filepath, mode='rb') as f:
+        obj = pickle.load(f, *args, **kwargs)
+    return obj

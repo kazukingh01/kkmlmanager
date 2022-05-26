@@ -13,7 +13,7 @@ __all__ = [
 ]
 
 
-def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None, **kwargs):
+def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None, prev_study_name: str=None, **kwargs):
     """
     Params::
         storage: postgresql://postgres:postgres@127.0.0.1:5432/optuna
@@ -40,6 +40,11 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
         assert isinstance(storage, str)
         study = optuna.load_study(study_name=name, storage=storage)
     logger.info(f"start study. func: {func}, n_trials: {n_trials}")
+    if prev_study_name is not None:
+        assert isinstance(prev_study_name, str)
+        logger.info(f"use CmaEsSampler with previous study: {prev_study_name}")
+        study_prev    = optuna.load_study(storage=storage, study_name=prev_study_name)
+        study.sampler = optuna.samplers.CmaEsSampler(source_trials=study_prev.trials)
     study.optimize(func, n_trials=n_trials)
     logger.info("END")
     return study

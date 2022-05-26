@@ -345,10 +345,14 @@ class MLManager:
         self.proc_ans.is_check = True
         self.logger.info("END")
     
-    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
+    def predict(self, df: pd.DataFrame=None, input_x: np.ndarray=None, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
         self.logger.info("START")
         assert is_exp
-        input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+        if input_x is None:
+            assert isinstance(df, pd.DataFrame)
+            input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+        else:
+            input_y, input_index = None, None
         self.logger.info(f"predict mode: {'calib' if self.is_calib else 'normal'}")
         output = getattr(self.get_model(), self.model_func)(input_x, **kwargs)
         self.logger.info("END")
@@ -482,7 +486,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True, is_cvmode: bool=False):
+    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True, is_normalize: bool=True, is_cvmode: bool=False):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -493,7 +497,9 @@ class MLManager:
         if is_cvmode:
             assert len(self.list_cv) > 0
             assert df_calib is None
-            calibrater = MultiModel([Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class) for i in self.list_cv], func_predict=self.model_func)
+            calibrater = MultiModel([
+                Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class, is_normalize=is_normalize) for i in self.list_cv
+            ], func_predict=self.model_func)
             for i, i_cv in enumerate(self.list_cv):
                 df = getattr(self, f"eval_valid_df_cv{i_cv}").copy()
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
@@ -502,7 +508,7 @@ class MLManager:
                 input_y = df.loc[:, df.columns == columns_ans].values.reshape(-1).astype(int)
                 calibrater.models[i].fit(input_x, input_y)
         else:
-            calibrater = Calibrater(self.get_model(calib=False), self.model_func, is_fit_by_class=is_fit_by_class)
+            calibrater = Calibrater(self.get_model(calib=False), self.model_func, is_fit_by_class=is_fit_by_class, is_normalize=is_normalize)
             # fitting
             input_x, input_y = None, None
             if df_calib is None:
@@ -537,6 +543,12 @@ class MLManager:
             self.eval_test_df["index"] = test_index
         self.logger.info("END")
         return df_eval, se_eval
+    
+    def set_n_jobs(self, n_jobs: int):
+        self.n_jobs          = n_jobs
+        self.proc_row.n_jobs = n_jobs
+        self.proc_exp.n_jobs = n_jobs
+        self.proc_ans.n_jobs = n_jobs
 
     def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8", is_minimum: bool=False):
         self.logger.info("START")
@@ -568,10 +580,7 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
         manager = pickle.load(f)
     manager.__class__ = MLManager
     manager.logger = set_logger(manager.logger.name, internal_log=True)
-    manager.n_jobs = n_jobs
-    manager.proc_row.n_jobs = n_jobs
-    manager.proc_exp.n_jobs = n_jobs
-    manager.proc_ans.n_jobs = n_jobs
+    manager.set_n_jobs(n_jobs)
     if os.path.exists(f"{filepath}.log"):
         logger.info(f"load log file: {filepath}.log")
         with open(f"{filepath}.log", mode='r') as f:
@@ -618,3 +627,37 @@ class MultiModel:
         return self.predict_common(input, weight=weight, funcname="predict", **kwargs)
     def predict_proba(self, input: np.ndarray, weight: List[float]=None, **kwargs):
         return self.predict_common(input, weight=weight, funcname="predict_proba", **kwargs)
+
+
+class ChainModel:
+    def __init__(self, output_string: str):
+        assert isinstance(output_string, str)
+        self.list_mlmanager = []
+        self.output_string  = output_string
+    def add(self, mlmanager: MLManager, is_add_output: bool=False, is_same_input: bool=True):
+        logger.info("START")
+        assert isinstance(mlmanager, MLManager)
+        assert isinstance(is_add_output, bool)
+        assert isinstance(is_same_input, bool)
+        self.list_mlmanager.append({
+            "mlmanager": mlmanager, "is_add_output": is_add_output, "is_same_input": is_same_input,
+        })
+        logger.info("END")        
+    def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
+        logger.info("START")
+        input_x, list_output = None, []
+        for dictwk in self.list_mlmanager:
+            mlmanager: MLManager = dictwk["mlmanager"]
+            is_add_output, is_same_input = dictwk["is_add_output"], dictwk["is_same_input"]
+            if input_x is None:
+                input_x, input_y, input_index = mlmanager.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+            if is_same_input:
+                output, _, _ = mlmanager.predict(df=None, input_x=input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
+            else:
+                output, _, _ = mlmanager.predict(df=df,   input_x=None,    is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
+            if is_add_output:
+                input_x = np.concatenate([input_x, output], axis=-1)
+            list_output.append(output)
+        output = eval(self.output_string, {}, {"output": list_output, "np": np, "pd": pd})
+        logger.info("END")
+        return output, input_y, input_index

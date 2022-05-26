@@ -36,16 +36,18 @@ class MockCalibrater(BaseEstimator):
 
 
 class Calibrater:
-    def __init__(self, model, func_predict: str, is_fit_by_class: bool=True):
+    def __init__(self, model, func_predict: str, is_fit_by_class: bool=True, is_normalize: bool=False):
         logger.info("START")
         assert isinstance(func_predict, str)
         assert hasattr(model, func_predict)
         assert isinstance(is_fit_by_class, bool)
+        assert isinstance(is_normalize, bool)
         logger.info(f"model: {model}, is_fit_by_class: {is_fit_by_class}")
         self.model      = model
         self.mock       = None
         self.calibrater = None
         self.is_fit_by_class = is_fit_by_class
+        self.is_normalize    = is_normalize
         self.func_predict    = func_predict
         setattr(
             self, func_predict, partial(self.predict_common, is_mock=False, funcname="predict_proba")
@@ -86,12 +88,12 @@ class Calibrater:
         'input_x' is Features. is not Probability ( If is_mock == False ).
         """
         logger.info("START")
-        logger.info(f"is_mock: {is_mock}, func_predict: {self.func_predict}, funcname: {funcname}")
+        logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, calibrater predict: {funcname}")
         if is_mock:
             output = input_x
         else:
             output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
-        logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}")
+        logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}, is_normalize: {self.is_normalize}")
         if self.is_fit_by_class:
             output = getattr(self.calibrater, funcname)(output)
         else:
@@ -99,6 +101,8 @@ class Calibrater:
             output = self.to_binary_shape(output)
             output = getattr(self.calibrater, funcname)(output)
             output = output[:, -1].reshape(-1, shape)
+        if self.is_normalize:
+            output = (output / output.sum(axis=-1).reshape(-1, 1))
         logger.info("END")
         return output
 
