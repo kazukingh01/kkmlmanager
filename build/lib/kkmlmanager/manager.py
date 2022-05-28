@@ -634,30 +634,32 @@ class ChainModel:
         assert isinstance(output_string, str)
         self.list_mlmanager = []
         self.output_string  = output_string
-    def add(self, mlmanager: MLManager, is_add_output: bool=False, is_same_input: bool=True):
+    def add(self, mlmanager: MLManager, input_string: str=None):
+        """
+        input_string::
+            None -> df
+            ndf  -> list_mlmanager[0] proc_call
+            out0 -> list_mlmanager[0] predict
+        """
         logger.info("START")
         assert isinstance(mlmanager, MLManager)
-        assert isinstance(is_add_output, bool)
-        assert isinstance(is_same_input, bool)
-        self.list_mlmanager.append({
-            "mlmanager": mlmanager, "is_add_output": is_add_output, "is_same_input": is_same_input,
-        })
+        assert input_string is None or isinstance(input_string, str)
+        self.list_mlmanager.append({"mlmanager": mlmanager, "input_string": input_string})
         logger.info("END")        
     def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
         logger.info("START")
-        input_x, list_output = None, []
-        for dictwk in self.list_mlmanager:
+        assert len(self.list_mlmanager) > 0
+        input_x, input_y, input_index = self.list_mlmanager[0]["mlmanager"].proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+        dict_output = {"ndf": input_x, "np": np, "pd": pd}
+        for i, dictwk in enumerate(self.list_mlmanager):
             mlmanager: MLManager = dictwk["mlmanager"]
-            is_add_output, is_same_input = dictwk["is_add_output"], dictwk["is_same_input"]
-            if input_x is None:
-                input_x, input_y, input_index = mlmanager.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
-            if is_same_input:
-                output, _, _ = mlmanager.predict(df=None, input_x=input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
+            input_string         = dictwk["input_string"]
+            if input_string is None:
+                output, _, _ = mlmanager.predict(df=df, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             else:
-                output, _, _ = mlmanager.predict(df=df,   input_x=None,    is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
-            if is_add_output:
-                input_x = np.concatenate([input_x, output], axis=-1)
-            list_output.append(output)
-        output = eval(self.output_string, {}, {"output": list_output, "np": np, "pd": pd})
+                input        = eval(input_string, {}, dict_output)
+                output, _, _ = mlmanager.predict(df=None, input_x=input, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
+            dict_output[f"out{i}"] = output.copy()
+        output = eval(self.output_string, {}, dict_output)
         logger.info("END")
         return output, input_y, input_index
