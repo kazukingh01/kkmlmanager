@@ -358,10 +358,12 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self):
+    def set_cvmodel(self, list_cv: List[int]=None):
         self.logger.info("START")
         assert len(self.list_cv) > 0
-        self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv], func_predict=self.model_func)
+        if list_cv is None: list_cv = self.list_cv
+        assert check_type_list(list_cv, int)
+        self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
@@ -486,7 +488,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True, is_normalize: bool=True, is_cvmode: bool=False):
+    def calibration(self, df_calib: pd.DataFrame=None, columns_ans: str=None, n_bins: int=10, is_fit_by_class: bool=True, is_normalize: bool=True, is_cvmode: bool=False, list_cv: List[int]=None):
         self.logger.info("START")
         assert not self.is_reg
         assert self.is_fit
@@ -497,10 +499,12 @@ class MLManager:
         if is_cvmode:
             assert len(self.list_cv) > 0
             assert df_calib is None
+            if list_cv is None: list_cv = self.list_cv
+            assert check_type_list(list_cv, int)
             calibrater = MultiModel([
-                Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class, is_normalize=is_normalize) for i in self.list_cv
+                Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class, is_normalize=is_normalize) for i in list_cv
             ], func_predict=self.model_func)
-            for i, i_cv in enumerate(self.list_cv):
+            for i, i_cv in enumerate(list_cv):
                 df = getattr(self, f"eval_valid_df_cv{i_cv}").copy()
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
                 if columns_ans is None: columns_ans = "answer"
@@ -512,7 +516,10 @@ class MLManager:
             # fitting
             input_x, input_y = None, None
             if df_calib is None:
-                df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in self.list_cv], axis=0, ignore_index=True, sort=False)
+                assert len(self.list_cv) > 0
+                if list_cv is None: list_cv = self.list_cv
+                assert check_type_list(list_cv, int)
+                df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in list_cv], axis=0, ignore_index=True, sort=False)
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
                 if columns_ans is None: columns_ans = "answer"
                 assert isinstance(columns_ans, str) and np.any(df.columns == columns_ans)
