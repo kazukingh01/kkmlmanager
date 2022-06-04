@@ -634,17 +634,18 @@ class ChainModel:
         assert isinstance(output_string, str)
         self.list_mlmanager = []
         self.output_string  = output_string
-    def add(self, mlmanager: MLManager, input_string: str=None):
+    def add(self, mlmanager: MLManager, name: str, input_string: str=None):
         """
         input_string::
-            None -> df
-            ndf  -> list_mlmanager[0] proc_call
-            out0 -> list_mlmanager[0] predict
+            None   -> df
+            ndf    -> list_mlmanager[0] proc_call
+            "name" -> list_mlmanager[0] predict
         """
         logger.info("START")
         assert isinstance(mlmanager, MLManager)
+        assert isinstance(name, str)
         assert input_string is None or isinstance(input_string, str)
-        self.list_mlmanager.append({"mlmanager": mlmanager, "input_string": input_string})
+        self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
         logger.info("END")        
     def predict(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
         logger.info("START")
@@ -653,13 +654,16 @@ class ChainModel:
         dict_output = {"ndf": input_x, "np": np, "pd": pd}
         for i, dictwk in enumerate(self.list_mlmanager):
             mlmanager: MLManager = dictwk["mlmanager"]
+            model_name           = dictwk["name"]
             input_string         = dictwk["input_string"]
+            logger.info(f"model: {model_name} predict.")
             if input_string is None:
                 output, _, _ = mlmanager.predict(df=df, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             else:
                 input        = eval(input_string, {}, dict_output)
                 output, _, _ = mlmanager.predict(df=None, input_x=input, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
-            dict_output[f"out{i}"] = output.copy()
+            assert model_name not in dict_output
+            dict_output[model_name] = output.copy()
         output = eval(self.output_string, {}, dict_output)
         logger.info("END")
         return output, input_y, input_index
