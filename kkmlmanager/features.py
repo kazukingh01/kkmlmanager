@@ -564,11 +564,11 @@ def get_features_by_randomtree_importance(
     for i in range(max_iter):
         logger.info(f"create forest. loop: {i}, cnt: {se_cnt.median()}, max: {se_cnt.max()}")
         dictwk = {
-            "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto",
+            "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto", "class_weight": "balanced",
             "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state":i, "n_jobs": n_jobs
         }
         for x, y in kwargs.items():
-            if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion"]: dictwk[x] = y        
+            if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion", "class_weight"]: dictwk[x] = y        
         if is_reg: model = ExtraTreesRegressor( **dictwk)
         else:      model = ExtraTreesClassifier(**dictwk)
         if i == 0: logger.info(f"model: {model}")
