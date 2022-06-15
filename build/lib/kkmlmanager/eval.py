@@ -23,18 +23,24 @@ def accuracy_top_k(answer: np.ndarray, input: np.ndarray, top_k: int=1):
     ndf = ndf[:, :top_k]
     return (ndf == answer.reshape(-1, 1)).sum() / answer.shape[0]
 
-def predict_model(model, input: np.ndarray, func_predict: str=None, **kwargs):
+def predict_model(model, input: np.ndarray, is_reg: bool=False, func_predict: str=None, **kwargs):
     logger.info("START")
     assert isinstance(input, np.ndarray)
     assert len(input.shape) == 2
     df = pd.DataFrame(index=np.arange(input.shape[0]))
     if func_predict is None:
         if   hasattr(model, "predict_proba"): func_predict = "predict_proba"
-        elif hasattr(model, "predict"):       func_predict = "predict"    
+        elif hasattr(model, "predict"):       func_predict = "predict"
+    assert isinstance(func_predict, str)    
     output = getattr(model, func_predict)(input, **kwargs)
     assert isinstance(output, np.ndarray)
     assert len(output.shape) in [1, 2]
-    if len(output.shape) == 2:
+    if len(output.shape) == 1: output = output.reshape(-1, 1)
+    if is_reg:
+        df[[f"predict_{i}" for i in range(output.shape[-1])]] = output
+    else:
+        if output.shape[-1] == 1:
+            output = np.concatenate([(1 - output), output], axis=1)
         if hasattr(model, "classes_") and isinstance(model.classes_, np.ndarray):
             ndf_class = model.classes_ 
             if ndf_class.shape[0] != output.shape[-1]:
@@ -45,8 +51,6 @@ def predict_model(model, input: np.ndarray, func_predict: str=None, **kwargs):
         assert int(ndf_class.sum()) == int(np.arange(ndf_class.shape[0]).sum()) # allow [0, 1, 2, ...]. Don't allow [0, 2, 3, ...]
         df[[f"predict_proba_{i}" for i in ndf_class.astype(int)]] = output
         df["predict"] = np.argmax(output, axis=1)
-    else:
-        df["predict"] = output
     logger.info("END")
     return df
 
@@ -62,7 +66,7 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
             assert len(input_x.shape) == 2
             df = pd.DataFrame(input_x, columns=[f"predict_proba_{i}" for i in range(input_x.shape[1])]) 
     else:
-        df = predict_model(model, input_x, func_predict=func_predict, **kwargs)
+        df = predict_model(model, input_x, is_reg=is_reg, func_predict=func_predict, **kwargs)
     se = pd.Series(dtype=object)
     if is_reg:
         assert len(input_y.shape) == 1
