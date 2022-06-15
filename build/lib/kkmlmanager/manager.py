@@ -362,7 +362,7 @@ class MLManager:
         self.logger.info("START")
         assert len(self.list_cv) > 0
         if list_cv is None: list_cv = self.list_cv
-        assert check_type_list(list_cv, int)
+        assert check_type_list(list_cv, [int, str])
         self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
