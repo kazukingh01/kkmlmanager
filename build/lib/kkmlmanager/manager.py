@@ -532,7 +532,7 @@ class MLManager:
         self.calibrater = calibrater
         output          = getattr(self.calibrater, self.model_func)(input_x, is_mock=True)
         self.is_calib   = True
-        self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
+        # self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         self.logger.info("END")
 
     def evaluate(self, df_test: pd.DataFrame, columns_ans: str=None, is_store: bool=False, **kwargs):

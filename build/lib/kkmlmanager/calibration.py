@@ -62,7 +62,10 @@ class Calibrater:
         'input_x' is Probability. is not Features.
         """
         logger.info("START")
+        assert isinstance(input_x, np.ndarray) and len(input_x.shape) == 2 and input_x.shape[-1] >= 2
+        assert isinstance(input_y, np.ndarray) and len(input_y.shape) == 1
         classes = self.model.classes_ if hasattr(self.model, "classes_") else np.sort(np.unique(input_y))
+        if (classes.shape[0] == 1) and (classes[0] == 0): classes = np.array([0, 1])
         assert classes.shape[0] == (classes.max() + 1)
         if self.is_fit_by_class:
             self.mock = MockCalibrater(classes=classes)
@@ -93,6 +96,8 @@ class Calibrater:
             output = input_x
         else:
             output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
+            if len(output.shape) == 1:
+                output = np.stack([1 - output, output]).T
         logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}, is_normalize: {self.is_normalize}")
         if self.is_fit_by_class:
             output = getattr(self.calibrater, funcname)(output)
