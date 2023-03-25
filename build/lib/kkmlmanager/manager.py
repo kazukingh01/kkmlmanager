@@ -500,7 +500,7 @@ class MLManager:
             assert len(self.list_cv) > 0
             assert df_calib is None
             if list_cv is None: list_cv = self.list_cv
-            assert check_type_list(list_cv, int)
+            assert check_type_list(list_cv, str)
             calibrater = MultiModel([
                 Calibrater(getattr(self, f"model_cv{i}"), self.model_func, is_fit_by_class=is_fit_by_class, is_normalize=is_normalize) for i in list_cv
             ], func_predict=self.model_func)
@@ -518,7 +518,7 @@ class MLManager:
             if df_calib is None:
                 assert len(self.list_cv) > 0
                 if list_cv is None: list_cv = self.list_cv
-                assert check_type_list(list_cv, int)
+                assert check_type_list(list_cv, str)
                 df      = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in list_cv], axis=0, ignore_index=True, sort=False)
                 input_x = df.loc[:, df.columns.str.contains("^predict_proba", regex=True)].values
                 if columns_ans is None: columns_ans = "answer"

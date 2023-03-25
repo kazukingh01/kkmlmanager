@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import List
 from joblib import Parallel, delayed
+from functools import partial
 
 # local package
 from kkmlmanager.util.com import check_type_list
@@ -49,7 +50,8 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, func_aft
         else: batch = batch.reshape(-1, 1)
         list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func)(df.iloc[i_batch   ]) for i_batch in batch])
     else:
-        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size=batch_size)([delayed(func)(dfwk) for _, dfwk in df.groupby(group_key)])
+        if len(group_key) == 1: group_key = group_key[0]
+        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size=batch_size)([delayed(func)(dfwk) for *_, dfwk in df.groupby(group_key)])
     if len(list_object) > 0 and func_aft is not None:
         return func_aft(list_object, index, columns)
     else:
@@ -69,7 +71,7 @@ def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=
     for dictwk in list_astype:
         from_dtype, to_dtype = dictwk["from"], dictwk["to"]
         colbool = None
-        if from_dtype is None or from_dtype == slice(None):
+        if from_dtype is None or (isinstance(from_dtype, slice) and from_dtype == slice(None)):
             colbool = np.ones(df.shape[1]).astype(bool)
         elif isinstance(from_dtype, type):
             colbool = (df.dtypes == from_dtype)
@@ -85,8 +87,9 @@ def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=
             raise Exception(f"from_dtype: {from_dtype} is not matched.")
         colbool = ((df.dtypes != to_dtype).values & colbool)
         if colbool.sum() > 0:
-            dfwk = parallel_apply(
-                df.loc[:, colbool].copy(), lambda x: x.astype(to_dtype), axis=0, 
+            func1 = partial(astype_faster_func1, to_dtype=to_dtype)
+            dfwk  = parallel_apply(
+                df.loc[:, colbool].copy(), func1, axis=0,
                 func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False), 
                 batch_size=batch_size, n_jobs=n_jobs
             )
@@ -94,6 +97,8 @@ def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=
             df = pd.concat([df, dfwk], axis=1, ignore_index=False, sort=False)
     df = df.loc[:, columns]
     return df
+def astype_faster_func1(x, to_dtype=None):
+    return x.astype(to_dtype)
 
 def query(df: pd.DataFrame, str_where: str):
     assert isinstance(str_where, str) and str_where.find("(") < 0 and str_where.find(")") < 0

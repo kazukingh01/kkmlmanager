@@ -1,4 +1,5 @@
 import numpy as np
+from functools import partial
 from joblib import Parallel, delayed
 
 
@@ -24,17 +25,20 @@ def parallel_apply(ndf: np.ndarray, func, axis: int=0, batch_size: int=1, n_jobs
     if axis == 0: batch_size = min(ndf.shape[1], batch_size)
     else:         batch_size = min(ndf.shape[0], batch_size)
     list_object = None
+    func1 = partial(parallel_apply_func1, func=func)
     if axis == 0:
         batch = np.arange(ndf.shape[1])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         else: batch = batch.reshape(-1, 1)
-        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(lambda x, y: [x, func(y)])(i_batch, ndf[:, i_batch]) for i_batch in batch])
+        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func1)(i_batch, ndf[:, i_batch]) for i_batch in batch])
     else:
         batch = np.arange(ndf.shape[0])
         if batch_size > 1: batch = np.array_split(batch, batch.shape[0] // batch_size)
         else: batch = batch.reshape(-1, 1)
-        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(lambda x, y: [x, func(y)])(i_batch, ndf[i_batch   ]) for i_batch in batch])
+        list_object = Parallel(n_jobs=n_jobs, backend="loky", verbose=10, batch_size="auto")([delayed(func1)(i_batch, ndf[i_batch   ]) for i_batch in batch])
     indexes = np.concatenate([x for x, y in list_object])
     if axis == 0: output = np.concatenate([y for x, y in list_object], axis=1)[:, np.argsort(indexes)]
     else:         output = np.concatenate([y for x, y in list_object], axis=0)[np.argsort(indexes), :]
     return output
+def parallel_apply_func1(x, y, func=None):
+    return [x, func(y)]

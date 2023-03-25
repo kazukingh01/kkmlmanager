@@ -2,6 +2,7 @@ from typing import List
 import pandas as pd
 import numpy as np
 import torch
+from functools import partial
 from joblib import Parallel, delayed
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor, RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
@@ -71,7 +72,7 @@ def get_features_by_variance(
     dtypes   = df.dtypes.copy()
     list_obj = []
     for _cols in dtypes.unique():
-        list_obj += parallel_apply(df.loc[:, dtypes.index[dtypes == _cols]], lambda x: [x.columns, np.sort(x.values, axis=0)], axis=0, batch_size=batch_size, n_jobs=n_jobs)
+        list_obj += parallel_apply(df.loc[:, dtypes.index[dtypes == _cols]], get_features_by_variance_func1, axis=0, batch_size=batch_size, n_jobs=n_jobs)
     df_sort  = pd.concat([pd.DataFrame(y, columns=x) for x, y in list_obj], axis=1, ignore_index=False)
     df_sort  = df_sort.loc[:, columns]
     nsize    = int(df_sort.shape[0] * cutoff) - 1
@@ -85,28 +86,31 @@ def get_features_by_variance(
             boolwk = boolwk | (sewk1 == sewk2)
             sebool = sebool | boolwk
     else:
-        def work(df: pd.DataFrame, cutoff: float):
-            dfwk  = df.isna()
-            se_n  = df.shape[0] - dfwk.sum(axis=0)
-            seret = pd.Series(False, index=df.columns)
-            for x in se_n.index:
-                length = se_n.loc[x]
-                nsize  = int(length * cutoff)
-                if nsize == 0:
-                    seret.loc[x] = True
-                    break
-                nsize  = nsize - 1
-                sewk   = df.loc[:, x].copy()
-                sewk   = sewk[~dfwk.loc[:, x]]
-                for i in range(0, length - nsize):
-                    if sewk.iloc[i] == sewk.iloc[i + nsize]:
-                        seret.loc[x] = True
-                        break
-            return seret, None
-        list_obj = parallel_apply(df_sort, lambda x: work(x, cutoff), axis=0, batch_size=batch_size, n_jobs=n_jobs)
+        func1 = partial(get_features_by_variance_func2, cutoff=cutoff)
+        list_obj = parallel_apply(df_sort, func1, axis=0, batch_size=batch_size, n_jobs=n_jobs)
         for x, _ in list_obj: sebool.loc[x.index] = x
     logger.info("END")
     return sebool
+def get_features_by_variance_func1(x: pd.DataFrame):
+    return [x.columns, np.sort(x.values, axis=0)]
+def get_features_by_variance_func2(df: pd.DataFrame, cutoff: float=None):
+    dfwk  = df.isna()
+    se_n  = df.shape[0] - dfwk.sum(axis=0)
+    seret = pd.Series(False, index=df.columns)
+    for x in se_n.index:
+        length = se_n.loc[x]
+        nsize  = int(length * cutoff)
+        if nsize == 0:
+            seret.loc[x] = True
+            break
+        nsize  = nsize - 1
+        sewk   = df.loc[:, x].copy()
+        sewk   = sewk[~dfwk.loc[:, x]]
+        for i in range(0, length - nsize):
+            if sewk.iloc[i] == sewk.iloc[i + nsize]:
+                seret.loc[x] = True
+                break
+    return seret, None
 
 def corr_coef_pearson_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
     """
@@ -305,8 +309,8 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
     device = "cuda:0" if is_gpu else "cpu"
     if is_to_rank:
         assert isinstance(n_jobs, int) and n_jobs >= 1
-        df_x = parallel_apply(df_x.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
-        df_y = parallel_apply(df_y.copy(), lambda x: x.rank(method="average"), axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
+        df_x = parallel_apply(df_x.copy(), corr_coef_spearman_2array_func1, axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
+        df_y = parallel_apply(df_y.copy(), corr_coef_spearman_2array_func1, axis=0, func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], batch_size=10, n_jobs=n_jobs)
     input_x, input_y = df_x.values, df_y.values
     assert len(input_x.shape) == len(input_y.shape) == 2
     assert input_x.shape[0] == input_y.shape[0]
@@ -335,6 +339,8 @@ def corr_coef_spearman_2array(df_x: pd.DataFrame, df_y: pd.DataFrame, is_to_rank
     tens_corr[tens_nonan < min_n] = float("nan")
     logger.info("END")
     return tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
+def corr_coef_spearman_2array_func1(x):
+    return x.rank(method="average")
 
 def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", n_sample: int=1000, n_iter: int=1, min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     logger.info("START")
@@ -473,7 +479,7 @@ def get_features_by_correlation(
     df = astype_faster(df.copy(), list_astype=[{"from": None, "to": getattr(np, dtype)}], batch_size=10, n_jobs=n_jobs)
     if corr_type == "spearman":
         df = parallel_apply(
-            df.copy(), lambda x: x.rank(method="average"), axis=0, 
+            df.copy(), corr_coef_spearman_2array_func1, axis=0, 
             func_aft=lambda x,y,z: pd.concat(x, axis=1, ignore_index=False, sort=False).loc[y, z], 
             batch_size=10, n_jobs=n_jobs
         )
@@ -496,12 +502,9 @@ def get_features_by_correlation(
                 df_corr.iloc[batch_x, batch_y] = ndf_corr
     else:
         if corr_type == "pearson":
-            def work(input_x, input_y, dtype, min_n):
-                input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
-                ndf_corr = corr_coef_pearson_2array_numpy(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
-                return ndf_corr
+            func1    = partial(get_features_by_correlation_func1, dtype=dtype, min_n=min_n)
             list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
-                delayed(lambda x, y, z: (z, work(x, y, dtype, min_n)))(df.iloc[:, batch_x], df.iloc[:, batch_y], (batch_x, batch_y))
+                delayed(func1)(df.iloc[:, batch_x], df.iloc[:, batch_y], (batch_x, batch_y))
                 for i, batch_x in enumerate(batch) for batch_y in batch[i:]
             ])
         else:
@@ -510,6 +513,10 @@ def get_features_by_correlation(
             df_corr.iloc[batch_x, batch_y] = ndf_corr
     logger.info("END")
     return df_corr
+def get_features_by_correlation_func1(input_x, input_y, batch_xy: tuple, dtype=None, min_n=None):
+    input_x, input_y = input_x.values.astype(np.float32), input_y.values.astype(np.float32)
+    ndf_corr = corr_coef_pearson_2array_numpy(input_x, input_y, _dtype=getattr(np, dtype), min_n=min_n)
+    return batch_xy, ndf_corr
 
 def get_sklearn_trees_model_info(model) -> pd.DataFrame:
     logger.info("START")
@@ -569,8 +576,12 @@ def get_features_by_randomtree_importance(
         }
         for x, y in kwargs.items():
             if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion", "class_weight"]: dictwk[x] = y        
-        if is_reg: model = ExtraTreesRegressor( **dictwk)
-        else:      model = ExtraTreesClassifier(**dictwk)
+        if is_reg:
+            for x in ["class_weight"]:
+                if x in dictwk: del dictwk[x]
+            model = ExtraTreesRegressor( **dictwk)
+        else:
+            model = ExtraTreesClassifier(**dictwk)
         if i == 0: logger.info(f"model: {model}")
         model.fit(ndf_x, ndf_y)
         dfwk    = get_sklearn_trees_model_info(model)
