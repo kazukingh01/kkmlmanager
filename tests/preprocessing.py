@@ -45,7 +45,7 @@ if __name__ == "__main__":
     """
 
     # set manager
-    manager = MLManager(df.columns[df.columns.str.contains("^col_")].tolist(), "answer")
+    manager = MLManager(df.columns[df.columns.str.contains("^col_")].tolist(), "answer", n_jobs=4)
     """
     >>> manager.columns
     array([ 'col_0', 'col_1', 'col_2', 'col_3', 'col_4', 'col_5', 'col_6',

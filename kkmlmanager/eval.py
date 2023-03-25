@@ -38,6 +38,8 @@ def predict_model(model, input: np.ndarray, is_reg: bool=False, func_predict: st
     if len(output.shape) == 1: output = output.reshape(-1, 1)
     if is_reg:
         df[[f"predict_{i}" for i in range(output.shape[-1])]] = output
+        logger.info(f"we define 'predict' as 'predict_0'.")
+        df["predict"] = df["predict_0"].copy()
     else:
         if output.shape[-1] == 1:
             output = np.concatenate([(1 - output), output], axis=1)

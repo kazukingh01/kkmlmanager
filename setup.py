@@ -10,7 +10,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='kkmlmanager',
-    version='1.0.12',
+    version='1.1.0',
     description='my object detection library.',
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -25,10 +25,10 @@ setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        "numpy>=1.21.5",
-        "pandas>=1.3.5",
-        "scikit-learn>=1.0.2",
-        "matplotlib>=3.5.1",
+        "numpy>=1.24.2",
+        "pandas>=1.5.3",
+        "scikit-learn>=1.2.2",
+        "matplotlib>=3.6.3",
     ],
-    python_requires='>=3.8'
+    python_requires='>=3.11.2'
 )

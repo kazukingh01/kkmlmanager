@@ -1,4 +1,4 @@
-import logging, io, os, datetime
+import sys, logging, io, os, datetime
 from typing import List, Union
 
 
@@ -29,6 +29,7 @@ _pycolor = {
     "END"       : '\033[0m',
 }
 
+
 class MyFormatter(logging.Formatter):
     """
     Override Formatter's format to suppress the color code
@@ -56,7 +57,10 @@ class MyLogger(logging.Logger):
         self.color_warning   = ["BOLD", "YELLOW"]
         self.color_error     = ["BOLD", "RED"]
     
-    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, color: str=None):
+    def set_message_color(self, msg, level, color):
+        if hasattr(sys, "_getframe"):
+            # To match function name which I want to use before "info" is called.
+            logging.currentframe = lambda: sys._getframe(1)
         if   color is None and level == logging.INFO:    color = self.color_info
         elif color is None and level == logging.WARNING: color = self.color_warning
         elif color is None and level == logging.ERROR:   color = self.color_error
@@ -64,7 +68,13 @@ class MyLogger(logging.Logger):
         if   color is not None:
             addmsg = "".join([_pycolor[x] for x in color]) if isinstance(color, list) else _pycolor[color]
             msg    = addmsg + msg + _pycolor["END"]
-        super()._log(level, msg, args, exc_info=exc_info, extra=extra, stack_info=stack_info)
+        return msg
+
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, color: str=None):
+        super()._log(
+            level, self.set_message_color(msg, level, color=color), args, 
+            exc_info=exc_info, extra=extra, stack_info=stack_info, stacklevel=2,
+        )
 
     def raise_error(self, msg: str, exception = Exception):
         self.error(msg)
@@ -108,7 +118,7 @@ def set_logger(
         filepath:
             If you want to set the date to the name of the log file, you can use %YYYY%, %MM%,%DD% special string.
     Usage::
-        >>> from kktorch.util.logger import set_logger
+        >>> from kkmlmanager.util.logger import set_logger
         >>> logger = set_logger(__name__)
         >>> logger.info("Test message", color=["BOLD", "GREEN"])
     """
