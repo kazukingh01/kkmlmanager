@@ -243,12 +243,14 @@ class MLManager:
         assert type(df_train) == type(df_test)
         assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
         if df_train is not None:
-            df_adv, _ = get_features_by_adversarial_validation(
+            df_adv, df_pred, se_eval = get_features_by_adversarial_validation(
                 df_train, df_test, self.columns.tolist(), columns_ans=None, 
                 n_split=n_split, n_cv=n_cv, dtype=dtype, batch_size=batch_size, n_jobs=self.n_jobs, **kwargs
             )
             df_adv = df_adv.sort_values("ratio", ascending=False)
             self.features_adversarial = df_adv.copy()
+            self.eval_adversarial_se  = se_eval.copy()
+            self.eval_adversarial_df  = df_pred.copy()
         else:
             try: df_adv = getattr(self, "features_adversarial")
             except AttributeError:

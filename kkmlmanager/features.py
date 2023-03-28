@@ -571,7 +571,7 @@ def get_features_by_randomtree_importance(
     for i in range(max_iter):
         logger.info(f"create forest. loop: {i}, cnt: {se_cnt.median()}, max: {se_cnt.max()}")
         dictwk = {
-            "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto", "class_weight": "balanced",
+            "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"sqrt", "class_weight": "balanced",
             "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state":i, "n_jobs": n_jobs
         }
         for x, y in kwargs.items():
@@ -654,8 +654,9 @@ def get_features_by_adversarial_validation(
     df_adv["importance"] = df_imp.groupby("i_feature")["importance"].sum()
     df_adv["ratio"]      = (df_adv["importance"] / df_adv["count"])
     df_adv.index = columns_exp
-    val_auc = roc_auc_score( df_pred["answer"].values, df_pred["predict_proba_1"].values)
-    val_acc = accuracy_score(df_pred["answer"].values, df_pred["predict"].values)
-    logger.info(f"roc_auc: {val_auc}, accuracy: {val_acc}")
+    se_eval        = pd.Series(dtype=object)
+    se_eval["auc"] = roc_auc_score( df_pred["answer"].values, df_pred["predict_proba_1"].values)
+    se_eval["acc"] = accuracy_score(df_pred["answer"].values, df_pred["predict"].values)
+    logger.info(f"roc_auc: {se_eval['auc']}, accuracy: {se_eval['acc']}")
     logger.info("END")
-    return df_adv, df_pred
+    return df_adv, df_pred, se_eval
