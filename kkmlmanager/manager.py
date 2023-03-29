@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Union
 from sklearn.model_selection import StratifiedKFold
+from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 
 # local package
 from kkmlmanager.regproc import RegistryProc
@@ -436,8 +437,9 @@ class MLManager:
         self.logger.info("END")
 
     def fit_cross_validation(
-            self, df_train: pd.DataFrame, n_split: int=None, n_cv: int=None,
-            indexes_train: List[np.ndarray]=None, indexes_valid: List[np.ndarray]=None,
+            self, df_train: pd.DataFrame,
+            n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: List[str]=None,
+            n_cv: int=None, indexes_train: List[np.ndarray]=None, indexes_valid: List[np.ndarray]=None,
             params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={},
             is_proc_fit_every_cv: bool=True, is_save_model: bool=False
         ):
@@ -453,20 +455,40 @@ class MLManager:
         else:
             assert isinstance(n_split, int) and n_split >= 2
             assert isinstance(n_cv,    int) and n_cv    >= 1 and n_cv <= n_split
+            assert indexes_train is None
+            assert indexes_valid is None
         df_train = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
         if not is_proc_fit_every_cv:
             self.proc_fit(df_train, is_row=False, is_exp=True, is_ans=True)
         if n_split is not None:
+            assert cols_multilabel_split is None or check_type_list(cols_multilabel_split, str)
+            assert mask_split is None or (isinstance(mask_split, np.ndarray) and len(mask_split.shape) == 1 and df.shape[0] == mask_split.shape[0] and mask_split.dtype in [bool, np.bool])
             indexes_train, indexes_valid = [], []
-            splitter = StratifiedKFold(n_splits=n_split)
             _, ndf_y, _ = self.proc_fit(df_train, is_row=False, is_exp=False, is_ans=True)
+            indexes     = np.arange(df_train.shape[0], dtype=int)
+            if cols_multilabel_split is None:
+                logger.info(f"Use splitter: StratifiedKFold, n_split: {n_split}")
+                splitter = StratifiedKFold(n_splits=n_split)
+            else:
+                logger.info(f"Use splitter: MultilabelStratifiedKFold, n_split: {n_split}, cols_multilabel_split: {cols_multilabel_split}")
+                splitter = MultilabelStratifiedKFold(n_splits=n_split, shuffle=True, random_state=0)
+                ndf_oth  = df_train[cols_multilabel_split].copy().values
+                if len(ndf_y.shape) == 1: ndf_y = ndf_y.reshape(-1, 1)
+                ndf_y = np.concatenate([ndf_oth, ndf_y], axis=1)
+            if mask_split is not None:
+                indexes_mask = indexes[ mask_split].copy()
+                indexes      = indexes[~mask_split].copy()
+                ndf_y        = ndf_y[~mask_split]
+                logger.info(f"Use mask split. mask indexes: {indexes_mask}")
             try:
-                for index_train, index_test in splitter.split(np.arange(df_train.shape[0], dtype=int), ndf_y):
+                for i_split, (index_train, index_valid) in enumerate(splitter.split(indexes, ndf_y)):
+                    if mask_split is not None: index_train = np.append(index_train, indexes_mask.copy())
+                    logger.info(f"Split: {i_split}. \ntrain indexes: {index_train}\nvalid indexes: {index_valid}")
                     indexes_train.append(index_train)
-                    indexes_valid.append(index_test )
+                    indexes_valid.append(index_valid)
             except ValueError as e:
                 logger.warning(f"{e}")
-                logger.info("use normal random splitter.")
+                logger.warning("use normal random splitter. 'mask_split' & 'cols_multilabel_split' functions are ignored.")
                 indexes     = np.arange(df_train.shape[0], dtype=int)
                 index_split = np.array_split(indexes, n_split)
                 for i in range(n_cv):
