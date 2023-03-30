@@ -318,9 +318,12 @@ class MLManager:
         assert isinstance(is_ans, bool)
         self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
         df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr[~np.isin(self.columns_otr, self.columns_ans)].tolist()].copy()
+        self.logger.info("proc fit: row")
         df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
         if is_exp == False and is_ans == False: return df
+        self.logger.info("proc fit: exp")
         output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"]) if is_exp else None
+        self.logger.info("proc fit: ans")
         output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"]) if is_ans else None
         self.logger.info("END")
         return output_x, output_y, df.index
@@ -457,14 +460,25 @@ class MLManager:
             assert isinstance(n_cv,    int) and n_cv    >= 1 and n_cv <= n_split
             assert indexes_train is None
             assert indexes_valid is None
+        is_fit, ndf_oth = False, None
+        index_df = df_train.index.copy()
+        if cols_multilabel_split is not None:
+            ndf_oth = df_train[cols_multilabel_split].copy().values
         df_train = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
+        ndf_bool = index_df.isin(df_train.index)
+        if cols_multilabel_split is not None:
+            ndf_oth = ndf_oth[ndf_bool]
+        if mask_split is not None:
+            mask_split = mask_split[ndf_bool]
         if not is_proc_fit_every_cv:
-            self.proc_fit(df_train, is_row=False, is_exp=True, is_ans=True)
+            self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
+            is_fit = True
         if n_split is not None:
             assert cols_multilabel_split is None or check_type_list(cols_multilabel_split, str)
-            assert mask_split is None or (isinstance(mask_split, np.ndarray) and len(mask_split.shape) == 1 and df.shape[0] == mask_split.shape[0] and mask_split.dtype in [bool, np.bool])
+            assert (mask_split is None) or (isinstance(mask_split, np.ndarray) and len(mask_split.shape) == 1 and df_train.shape[0] == mask_split.shape[0] and mask_split.dtype in [bool, np.bool_])
             indexes_train, indexes_valid = [], []
-            _, ndf_y, _ = self.proc_fit(df_train, is_row=False, is_exp=False, is_ans=True)
+            if is_fit: _, ndf_y, _ = self.proc_call(df_train, is_row=False, is_exp=False, is_ans=True)
+            else:      _, ndf_y, _ = self.proc_fit( df_train, is_row=False, is_exp=False, is_ans=True)
             indexes     = np.arange(df_train.shape[0], dtype=int)
             if cols_multilabel_split is None:
                 logger.info(f"Use splitter: StratifiedKFold, n_split: {n_split}")
@@ -472,7 +486,6 @@ class MLManager:
             else:
                 logger.info(f"Use splitter: MultilabelStratifiedKFold, n_split: {n_split}, cols_multilabel_split: {cols_multilabel_split}")
                 splitter = MultilabelStratifiedKFold(n_splits=n_split, shuffle=True, random_state=0)
-                ndf_oth  = df_train[cols_multilabel_split].copy().values
                 if len(ndf_y.shape) == 1: ndf_y = ndf_y.reshape(-1, 1)
                 ndf_y = np.concatenate([ndf_oth, ndf_y], axis=1)
             if mask_split is not None:
