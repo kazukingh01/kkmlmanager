@@ -1,6 +1,7 @@
 import datetime
 import optuna
 import pandas as pd
+from optuna.samplers import TPESampler
 # local package
 from kkmlmanager.util.logger import set_logger
 logger = set_logger(__name__)
@@ -28,17 +29,18 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
     assert isinstance(is_new, bool)
     name = f"study_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}" if name is None else name
     assert isinstance(name, str)
-    study = None
+    study   = None
+    sampler = TPESampler(n_ei_candidates=100, multivariate=True)
     if is_new:
         if storage is not None:
             logger.info(f"create study. storage: {storage}, name: {name}")
-            study = optuna.create_study(study_name=name, storage=storage, **kwargs)
+            study = optuna.create_study(study_name=name, sampler=sampler, storage=storage, **kwargs)
         else:
             logger.info(f"load study. storage: {storage}, name: {name}")
-            study = optuna.create_study(study_name=name, storage=f'sqlite:///{name}.db', **kwargs)
+            study = optuna.create_study(study_name=name, sampler=sampler, storage=f'sqlite:///{name}.db', **kwargs)
     else:
         assert isinstance(storage, str)
-        study = optuna.load_study(study_name=name, storage=storage)
+        study = optuna.load_study(study_name=name, sampler=sampler, storage=storage)
     logger.info(f"start study. func: {func}, n_trials: {n_trials}")
     if prev_study_name is not None:
         assert isinstance(prev_study_name, str)
