@@ -156,7 +156,7 @@ class MLManager:
         else:
             try: sebool = getattr(self, attr_name)
             except AttributeError:
-                logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
         columns = sebool.index[~sebool].values
         if df is not None:
             columns_del = self.columns[~isin_compare_string(self.columns, columns)].copy()
@@ -192,7 +192,7 @@ class MLManager:
         else:
             try: df_corr = getattr(self, attr_name)
             except AttributeError:
-                logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
         if cutoff is not None:
             columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].values
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
@@ -223,7 +223,7 @@ class MLManager:
         else:
             try: df_treeimp = getattr(self, "features_treeimp")
             except AttributeError:
-                logger.raise_error(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.raise_error(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
         columns_sort = df_treeimp.index.values.copy()
         self.columns = np.concatenate([columns_sort[isin_compare_string(columns_sort, self.columns)], self.columns[~isin_compare_string(self.columns, columns_sort)]])
         if cutoff is not None:
@@ -255,7 +255,7 @@ class MLManager:
         else:
             try: df_adv = getattr(self, "features_adversarial")
             except AttributeError:
-                logger.raise_error(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.raise_error(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
         if cutoff is not None:
             columns_del = df_adv.index[df_adv["ratio"] >= cutoff]
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
@@ -320,11 +320,14 @@ class MLManager:
         df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr[~np.isin(self.columns_otr, self.columns_ans)].tolist()].copy()
         self.logger.info("proc fit: row")
         df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
+        self.logger.info(f"df shape: {df.shape}")
         if is_exp == False and is_ans == False: return df
         self.logger.info("proc fit: exp")
         output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"]) if is_exp else None
+        self.logger.info(f"output_x shape: {output_x.shape if output_x is not None else None}")
         self.logger.info("proc fit: ans")
         output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"]) if is_ans else None
+        self.logger.info(f"output_y shape: {output_y.shape if output_y is not None else None}")
         self.logger.info("END")
         return output_x, output_y, df.index
     
@@ -336,9 +339,12 @@ class MLManager:
         self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
         if is_row:
             df = self.proc_row(df)
+            self.logger.info(f"df shape: {df.shape}")
         if is_exp == False and is_ans == False: return df
         output_x = self.proc_exp(df) if is_exp else None
+        self.logger.info(f"output_x shape: {output_x.shape if output_x is not None else None}")
         output_y = self.proc_ans(df) if is_ans else None
+        self.logger.info(f"output_y shape: {output_y.shape if output_y is not None else None}")
         self.logger.info("END")
         return output_x, output_y, df.index
 
@@ -481,10 +487,10 @@ class MLManager:
             else:      _, ndf_y, _ = self.proc_fit( df_train, is_row=False, is_exp=False, is_ans=True)
             indexes     = np.arange(df_train.shape[0], dtype=int)
             if cols_multilabel_split is None:
-                logger.info(f"Use splitter: StratifiedKFold, n_split: {n_split}")
+                self.logger.info(f"Use splitter: StratifiedKFold, n_split: {n_split}")
                 splitter = StratifiedKFold(n_splits=n_split)
             else:
-                logger.info(f"Use splitter: MultilabelStratifiedKFold, n_split: {n_split}, cols_multilabel_split: {cols_multilabel_split}")
+                self.logger.info(f"Use splitter: MultilabelStratifiedKFold, n_split: {n_split}, cols_multilabel_split: {cols_multilabel_split}")
                 splitter = MultilabelStratifiedKFold(n_splits=n_split, shuffle=True, random_state=0)
                 if len(ndf_y.shape) == 1: ndf_y = ndf_y.reshape(-1, 1)
                 ndf_y = np.concatenate([ndf_oth, ndf_y], axis=1)
@@ -492,16 +498,16 @@ class MLManager:
                 indexes_mask = indexes[ mask_split].copy()
                 indexes      = indexes[~mask_split].copy()
                 ndf_y        = ndf_y[~mask_split]
-                logger.info(f"Use mask split. mask indexes: {indexes_mask}")
+                self.logger.info(f"Use mask split. mask indexes: {indexes_mask}")
             try:
                 for i_split, (index_train, index_valid) in enumerate(splitter.split(indexes, ndf_y)):
                     if mask_split is not None: index_train = np.append(index_train, indexes_mask.copy())
-                    logger.info(f"Split: {i_split}. \ntrain indexes: {index_train}\nvalid indexes: {index_valid}")
+                    self.logger.info(f"Split: {i_split}. \ntrain indexes: {index_train}\nvalid indexes: {index_valid}")
                     indexes_train.append(index_train)
                     indexes_valid.append(index_valid)
             except ValueError as e:
-                logger.warning(f"{e}")
-                logger.warning("use normal random splitter. 'mask_split' & 'cols_multilabel_split' functions are ignored.")
+                self.logger.warning(f"{e}")
+                self.logger.warning("use normal random splitter. 'mask_split' & 'cols_multilabel_split' functions are ignored.")
                 indexes     = np.arange(df_train.shape[0], dtype=int)
                 index_split = np.array_split(indexes, n_split)
                 for i in range(n_cv):
