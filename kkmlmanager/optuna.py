@@ -30,7 +30,7 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
     name = f"study_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}" if name is None else name
     assert isinstance(name, str)
     study   = None
-    sampler = TPESampler(n_ei_candidates=100, multivariate=True)
+    sampler = TPESampler(n_ei_candidates=100, multivariate=True, constant_liar=True)
     if is_new:
         if storage is not None:
             logger.info(f"create study. storage: {storage}, name: {name}")
