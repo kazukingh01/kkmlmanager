@@ -32,12 +32,14 @@ __all__ = [
 
 
 class BaseProc:
-    def __init__(self, n_jobs: int=1):
-        assert isinstance(n_jobs, int) and n_jobs >= 1 
-        self.is_check = False
-        self.is_fit   = False
-        self.is_df    = False
-        self.n_jobs   = n_jobs    
+    def __init__(self, n_jobs: int=1, is_jobs_fix: bool=False):
+        assert isinstance(n_jobs, int) and n_jobs >= 1
+        assert isinstance(is_jobs_fix, bool)
+        self.is_check    = False
+        self.is_fit      = False
+        self.is_df       = False
+        self.n_jobs      = n_jobs
+        self.is_jobs_fix = is_jobs_fix
     def fit(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
         assert check_type(input, [pd.DataFrame, np.ndarray])
         self.is_df = isinstance(input, pd.DataFrame)
@@ -53,7 +55,7 @@ class BaseProc:
         return output
     def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, n_jobs: int=None, **kwargs):
         if not self.is_fit: raise Exception("You must use 'fit' first.")
-        if n_jobs is not None: self.n_jobs = n_jobs
+        if self.is_jobs_fix == False and n_jobs is not None: self.n_jobs = n_jobs
         if self.is_check:
             if self.is_df:
                 assert len(self.shape_in) == len(input.columns)
