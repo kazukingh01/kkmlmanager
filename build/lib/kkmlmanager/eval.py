@@ -97,8 +97,8 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         input_y_class  = np.argmax(input_y, axis=1)
         input_y_argmax = np.zeros_like(input_y, dtype=int)
         input_y_argmax[np.arange(input_y_argmax.shape[0]), input_y_class] = 1
-        se["logloss"]        = (-1 * input_y * np.log(ndf_pred)).sum(axis=1).mean()
-        se["logloss_argmax"] = log_loss(input_y_argmax, ndf_pred)
+        se["logloss"]        = (-1 * input_y        * np.log(ndf_pred)).sum(axis=1).mean()
+        se["logloss_argmax"] = (-1 * input_y_argmax * np.log(ndf_pred)).sum(axis=1).mean()
         for i in np.arange(n_class):
             se[f"binary_logloss_{i}"] = log_loss(input_y_argmax[:, i], ndf_pred[:, i])
         for i in range(1, n_class+1):
