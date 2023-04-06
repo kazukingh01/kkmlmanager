@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score, r2_score
+from sklearn.metrics import roc_auc_score, r2_score, log_loss
 
 # local package
 from kkmlmanager.util.logger import set_logger
@@ -65,6 +65,8 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
             assert len(input_x.shape) == 1
             df = pd.DataFrame(input_x, columns=["predict"]) 
         else:
+            if len(input_x.shape) == 1:
+                input_x = np.concatenate([(1 - input_x).reshape(-1, 1), input_x.reshape(-1, 1)], axis=1)
             assert len(input_x.shape) == 2
             df = pd.DataFrame(input_x, columns=[f"predict_proba_{i}" for i in range(input_x.shape[1])]) 
     else:
@@ -95,8 +97,10 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         input_y_class  = np.argmax(input_y, axis=1)
         input_y_argmax = np.zeros_like(input_y, dtype=int)
         input_y_argmax[np.arange(input_y_argmax.shape[0]), input_y_class] = 1
-        se["logloss"]        = (-1 * input_y        * np.log(ndf_pred)).sum(axis=1).mean()
-        se["logloss_argmax"] = (-1 * input_y_argmax * np.log(ndf_pred)).sum(axis=1).mean()
+        se["logloss"]        = (-1 * input_y * np.log(ndf_pred)).sum(axis=1).mean()
+        se["logloss_argmax"] = log_loss(input_y_argmax, ndf_pred)
+        for i in np.arange(n_class):
+            se[f"binary_logloss_{i}"] = log_loss(input_y_argmax[:, i], ndf_pred[:, i])
         for i in range(1, n_class+1):
             strlen=len(str(n_class))
             se[f"acc_top{str(i).zfill(strlen)}"] = accuracy_top_k(input_y_class, ndf_pred, top_k=i)
