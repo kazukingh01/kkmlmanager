@@ -29,83 +29,69 @@ class MockCalibrater(BaseEstimator):
         return X
     def predict_proba(self, *args, X=None, **kwargs):
         """
-        In scikit-learn calibrater input data by "pred_method(X=X)".
-        So parameter "X" name is important.
+        In scikit-learn, calibrater has api which is like "pred_method(X=X)".
+        So "X" is important api name.
         """
         return X
 
 
 class Calibrater:
-    def __init__(self, model, func_predict: str, is_fit_by_class: bool=True, is_normalize: bool=False):
+    def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False):
         logger.info("START")
         assert isinstance(func_predict, str)
         assert hasattr(model, func_predict)
-        assert isinstance(is_fit_by_class, bool)
         assert isinstance(is_normalize, bool)
-        logger.info(f"model: {model}, is_fit_by_class: {is_fit_by_class}")
-        self.model      = model
-        self.mock       = None
-        self.calibrater = None
-        self.is_fit_by_class = is_fit_by_class
-        self.is_normalize    = is_normalize
-        self.func_predict    = func_predict
+        assert isinstance(is_reg, bool)
+        logger.info(f"model: {model}, func_predict: {func_predict}, is_normalize: {is_normalize}, is_reg: {is_reg}")
+        self.model        = model
+        self.mock         = None
+        self.calibrater   = None
+        self.func_predict = func_predict
+        self.is_normalize = is_normalize
+        self.is_reg       = is_reg
         setattr(
-            self, func_predict, partial(self.predict_common, is_mock=False, funcname="predict_proba")
+            self, func_predict, partial(self.predict_common, is_mock=False)
         )
         logger.info("END")
 
     def __str__(self):
         return str(self.calibrater)
 
-    def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, **kwargs):
+    def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, n_bins: int=10, **kwargs):
         """
-        'input_x' is Probability. is not Features.
+        'input_x' must be probabilities, not Features.
         """
         logger.info("START")
         assert isinstance(input_x, np.ndarray) and len(input_x.shape) == 2 and input_x.shape[-1] >= 2
         assert isinstance(input_y, np.ndarray) and len(input_y.shape) == 1
-        classes = self.model.classes_ if hasattr(self.model, "classes_") else np.sort(np.unique(input_y))
-        if (classes.shape[0] == 1) and (classes[0] == 0): classes = np.array([0, 1])
-        assert classes.shape[0] == (classes.max() + 1)
-        if self.is_fit_by_class:
-            self.mock = MockCalibrater(classes=classes)
+        assert isinstance(n_bins, int) and n_bins >= 5
+        if self.is_reg:
+            self.classes_ = np.arange(1, dtype=int) if len(input_y.shape) == 1 else np.arange(input_y.shape[-1], dtype=int)
         else:
-            self.mock = MockCalibrater(classes=np.array([0, 1]))
+            self.classes_ = np.sort(np.unique(input_y))
+        self.mock       = MockCalibrater(classes=self.classes_)
         self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
-        if self.is_fit_by_class:
-            self.calibrater.fit(input_x, input_y, *args, **kwargs)
-        else:
-            input_x = self.to_binary_shape(input_x.copy())
-            input_y = np.eye(classes.shape[0])[input_y.astype(int)].reshape(-1)
-            self.calibrater.fit(input_x, input_y, *args, **kwargs)
+        self.calibrater.fit(input_x, input_y, *args, **kwargs)
+        output          = self.predict_common(input_x, is_mock=True)
+        self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         logger.info("END")
-    
-    @classmethod
-    def to_binary_shape(cls, ndf: np.ndarray):
-        ndf = ndf.reshape(-1)
-        ndf = np.stack([1 - ndf, ndf]).T
-        return ndf
-    
-    def predict_common(self, input_x, *args, is_mock: bool=False, funcname: str="predict_proba", **kwargs):
+        
+    def predict_common(self, input_x, *args, is_mock: bool=False, **kwargs):
         """
-        'input_x' is Features. is not Probability ( If is_mock == False ).
+        Note::
+            If is_mock == False, "input_x" must be features.
+            If is_mock == True,  "input_x" must be probabilities.
         """
         logger.info("START")
-        logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, calibrater predict: {funcname}")
+        logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, is_normalize: {self.is_normalize}")
         if is_mock:
             output = input_x
         else:
             output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
             if len(output.shape) == 1:
                 output = np.stack([1 - output, output]).T
-        logger.info(f"predict mode. is_fit_by_class: {self.is_fit_by_class}, is_normalize: {self.is_normalize}")
-        if self.is_fit_by_class:
-            output = getattr(self.calibrater, funcname)(output)
-        else:
-            shape  = output.shape[-1]
-            output = self.to_binary_shape(output)
-            output = getattr(self.calibrater, funcname)(output)
-            output = output[:, -1].reshape(-1, shape)
+        funcname = "predict" if self.is_reg else "predict_proba"
+        output   = getattr(self.calibrater, funcname)(output)
         if self.is_normalize:
             output = (output / output.sum(axis=-1).reshape(-1, 1))
         logger.info("END")
