@@ -652,6 +652,7 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
         logger.info(f"load log file: {filepath}.log")
         with open(f"{filepath}.log", mode='r') as f:
             manager.logger.internal_stream.write(f.read())
+    manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
     logger.info("END")
     return manager
 
