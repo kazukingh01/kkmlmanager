@@ -83,7 +83,10 @@ class MLManager:
                 self.columns_exp.tolist(), self.columns_ans.tolist(), columns_otr=self.columns_otr.tolist(), 
                 is_reg=self.is_reg, outdir=self.outdir, random_seed=self.random_seed, n_jobs=self.n_jobs
             )
-            ins.model        = copy.deepcopy(self.model)
+            if hasattr(self.model, "copy"):
+                ins.model    = self.model.copy()
+            else:
+                ins.model    = copy.deepcopy(self.model)
             ins.model_class  = copy.deepcopy(self.model_class)
             ins.model_args   = copy.deepcopy(self.model_args)
             ins.model_kwargs = copy.deepcopy(self.model_kwargs)
@@ -535,7 +538,10 @@ class MLManager:
             setattr(self, f"eval_valid_df_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_df)
             setattr(self, f"eval_valid_se_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_se)
             if is_save_model:
-                setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", copy.deepcopy(self.model))
+                if hasattr(self.model, "copy"):
+                    setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", self.model.copy())
+                else:
+                    setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", copy.deepcopy(self.model))
             if i_cv >= n_cv: break
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
