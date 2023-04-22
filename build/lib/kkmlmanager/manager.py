@@ -83,6 +83,7 @@ class MLManager:
                 self.columns_exp.tolist(), self.columns_ans.tolist(), columns_otr=self.columns_otr.tolist(), 
                 is_reg=self.is_reg, outdir=self.outdir, random_seed=self.random_seed, n_jobs=self.n_jobs
             )
+            ins.logger.internal_stream.write(copy.deepcopy(self.logger.internal_stream.getvalue()))
             if hasattr(self.model, "copy"):
                 ins.model    = self.model.copy()
             else:
