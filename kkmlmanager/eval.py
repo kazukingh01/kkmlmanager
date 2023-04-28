@@ -31,6 +31,7 @@ def predict_model(model, input: np.ndarray, is_reg: bool=False, func_predict: st
     if func_predict is None:
         if   hasattr(model, "predict_proba"): func_predict = "predict_proba"
         elif hasattr(model, "predict"):       func_predict = "predict"
+    logger.info(f"model: {model}, is_reg: {is_reg}, func_predict: {func_predict}, kwargs: {kwargs}")
     assert isinstance(func_predict, str)    
     output = getattr(model, func_predict)(input, **kwargs)
     assert isinstance(output, np.ndarray)
@@ -60,6 +61,7 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
     logger.info("START")
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
+    logger.info(f"model: {model}, is_reg: {is_reg}, func_predict: {func_predict}, kwargs: {kwargs}")
     if model is None:
         if is_reg:
             assert len(input_x.shape) == 1

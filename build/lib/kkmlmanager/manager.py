@@ -387,7 +387,7 @@ class MLManager:
                     logger.raise_error(f"Please run 'calibration_cv_model' first.")
             self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in self.list_cv], func_predict=self.model_func)
         else:
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in self.list_cv], func_predict=self.model_func)
+            self.model_multi = MultiModel([getattr(self, f"model_cv{i}")       for i in self.list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
@@ -677,7 +677,7 @@ class MultiModel:
         self.func_predict = func_predict
         setattr(self, self.func_predict, partial(self.predict_common, funcname=self.func_predict))
     def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict", **kwargs):
-        logger.info("START")
+        logger.info(f"START {self.__class__}")
         logger.info(f"func predict name: {funcname}")
         assert isinstance(input, np.ndarray)
         if weight is None: weight = [1.0] * len(self.models)
@@ -685,7 +685,7 @@ class MultiModel:
         assert isinstance(funcname, str)
         output = None
         for i, model in enumerate(self.models):
-            logger.info(f"predict model {i}")
+            logger.info(f"predict model {i}, model: {model}")
             _output = getattr(model, funcname)(input, **kwargs) * weight[i]
             if output is None: output  = _output
             else:              output += _output
@@ -695,10 +695,12 @@ class MultiModel:
 
 
 class ChainModel:
-    def __init__(self, output_string: str):
+    def __init__(self, output_string: str, is_normalize: bool=False):
         assert isinstance(output_string, str)
+        assert isinstance(is_normalize, bool)
         self.output_string  = output_string
         self.list_mlmanager = []
+        self.is_normalize   = is_normalize
 
     def add(self, mlmanager: MLManager, name: str, input_string: str=None):
         """
@@ -722,8 +724,8 @@ class ChainModel:
         self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
         logger.info("END")
 
-    def predict(self, input_x: Union[np.ndarray, pd.DataFrame], is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
-        logger.info("START")
+    def predict(self, input_x: Union[np.ndarray, pd.DataFrame], is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
+        logger.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
         if isinstance(input_x, pd.DataFrame):
             input_x, _, _ = self.list_mlmanager[0].proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
@@ -742,6 +744,15 @@ class ChainModel:
                 output, _, _ = mlmanager.predict(df=None, input_x=input, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             assert model_name not in dict_output
             dict_output[model_name] = output.copy()
-        output = eval(self.output_string, {}, dict_output)
+        try:
+            output = eval(self.output_string, {}, dict_output)
+        except Exception as e:
+            logger.info(f"{dict_output}")
+            logger.raise_error(f"{e}")
+        if is_normalize is None: is_normalize = self.is_normalize
+        if is_normalize:
+            logger.info("normalize output...")
+            assert len(output.shape) == 2
+            output = output / output.sum(axis=-1).reshape(-1, 1)
         logger.info("END")
         return output

@@ -82,13 +82,15 @@ class Calibrater:
             If is_mock == False, "input_x" must be features.
             If is_mock == True,  "input_x" must be probabilities.
         """
-        logger.info("START")
+        logger.info(f"START {self.__class__}")
         logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, is_normalize: {self.is_normalize}")
         if is_mock:
             output = input_x
         else:
             output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
             if len(output.shape) == 1:
+                # You must be careful when model is trained by binary logloss
+                # Calibration require the shape has more than 2 even if output's shape has only 1 because of being trained by binary.
                 output = np.stack([1 - output, output]).T
         funcname = "predict" if self.is_reg else "predict_proba"
         output   = getattr(self.calibrater, funcname)(output)
