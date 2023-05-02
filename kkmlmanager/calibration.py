@@ -90,8 +90,10 @@ class Calibrater:
                 # Calibration require the shape has more than 2 even if output's shape has only 1 because of being trained by binary.
                 output = np.stack([1 - output, output]).T
         funcname = "predict" if self.is_reg else "predict_proba"
+        logger.info("calibrate output ...")
         output   = getattr(self.calibrater, funcname)(output)
         if self.is_normalize:
+            logger.info("normalize output ...")
             output = (output / output.sum(axis=-1).reshape(-1, 1))
         logger.info("END")
         return output
