@@ -54,9 +54,6 @@ class Calibrater:
         )
         logger.info("END")
 
-    def __str__(self):
-        return str(self.calibrater)
-
     def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, n_bins: int=10, **kwargs):
         """
         'input_x' must be probabilities, not Features.
