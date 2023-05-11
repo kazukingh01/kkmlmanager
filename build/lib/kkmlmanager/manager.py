@@ -376,18 +376,21 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self, is_calib: bool=False):
+    def set_cvmodel(self, is_calib: bool=False, list_cv: List[int]=None):
         self.logger.info("START")
         assert isinstance(is_calib, bool)
         assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
+        assert list_cv is None or check_type_list(list_cv, int)
+        if list_cv is None: list_cv = self.list_cv
+        else:               list_cv = self.list_cv[list_cv]
         if is_calib:
             assert self.is_calib == False
-            for i in self.list_cv:
+            for i in list_cv:
                 if not hasattr(self, f"model_cv{i}_calib"):
                     logger.raise_error(f"Please run 'calibration_cv_model' first.")
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in self.list_cv], func_predict=self.model_func)
+            self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in list_cv], func_predict=self.model_func)
         else:
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}")       for i in self.list_cv], func_predict=self.model_func)
+            self.model_multi = MultiModel([getattr(self, f"model_cv{i}")       for i in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
