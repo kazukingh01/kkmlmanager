@@ -550,7 +550,10 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
 
-    def calibration(self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, is_predict: bool=False, is_normalize: bool=True, n_bins: int=10):
+    def calibration(
+        self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, is_use_valid: bool=False,
+        is_predict: bool=False, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10
+    ):
         """
         None::
             If is_predict == False:
@@ -566,6 +569,15 @@ class MLManager:
         assert not self.is_reg
         assert self.is_fit
         assert self.is_cvmodel == False
+        assert isinstance(is_use_valid,  bool)
+        assert isinstance(is_predict,    bool)
+        assert isinstance(is_normalize,  bool)
+        assert isinstance(is_binary_fit, bool)
+        if is_use_valid:
+            assert is_predict == False
+            assert hasattr(self, "eval_valid_df") and isinstance(self.eval_valid_df, pd.DataFrame) and self.eval_valid_df.shape[0] > 0
+            input_x = self.eval_valid_df.loc[:, self.eval_valid_df.columns.str.contains("^predict_proba_", regex=True)].values
+            input_y = self.eval_valid_df["answer"].values.astype(int)
         if is_predict:
             if isinstance(df, pd.DataFrame):
                 assert input_x is None
@@ -582,22 +594,23 @@ class MLManager:
         assert isinstance(input_x, np.ndarray)
         assert isinstance(input_y, np.ndarray)
         assert input_x.shape[0] == input_y.shape[0]
-        self.calibrater = Calibrater(self.model, self.model_func, is_normalize=is_normalize)
+        self.calibrater = Calibrater(self.model, self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
         self.logger.info("calibration start...")
         self.calibrater.fit(input_x, input_y, n_bins=n_bins)
         self.logger.info("calibration end...")
         self.is_calib   = True
         self.logger.info("END")
     
-    def calibration_cv_model(self, is_normalize: bool=False, n_bins: int=10):
+    def calibration_cv_model(self, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10):
         self.logger.info("START")
-        assert isinstance(is_normalize, bool)
+        assert isinstance(is_normalize,  bool)
+        assert isinstance(is_binary_fit, bool)
         assert not self.is_reg
         assert self.is_fit
         assert len(self.list_cv) > 0
         for x in self.list_cv:
             self.logger.info(f"calibration for {x} ...")
-            calibrater = Calibrater(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize)
+            calibrater = Calibrater(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
             df         = getattr(self, f"eval_valid_df_cv{x}").copy()
             input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
             input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)

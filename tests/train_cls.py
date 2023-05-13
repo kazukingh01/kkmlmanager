@@ -52,9 +52,15 @@ if __name__ == "__main__":
     })
     # training
     manager.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
+    # calibration
+    manager.calibration(is_use_valid=True, n_bins=100)
+    manager.calibration(is_use_valid=True, n_bins=100, is_binary_fit=True)
+    # test evaluation
+    df, se = manager.evaluate(df_valid, is_store=False)
     # cross validation
     manager.fit_cross_validation(df_train, n_split=5, n_cv=3, is_proc_fit_every_cv=True, is_save_model=True)
     # calibration
-    manager.calibration(n_bins=100)
+    manager.calibration_cv_model(n_bins=100)
+    manager.set_cvmodel(is_calib=True)
     # test evaluation
     df, se = manager.evaluate(df_valid, is_store=False)
