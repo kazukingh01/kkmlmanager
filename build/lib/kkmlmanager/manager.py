@@ -162,7 +162,9 @@ class MLManager:
         else:
             try: sebool = getattr(self, attr_name)
             except AttributeError:
-                self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.warning(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.info("END")
+                return None
         columns = sebool.index[~sebool].values
         if df is not None:
             columns_del = self.columns[~isin_compare_string(self.columns, columns)].copy()
@@ -198,7 +200,9 @@ class MLManager:
         else:
             try: df_corr = getattr(self, attr_name)
             except AttributeError:
-                self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.warning(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.info("END")
+                return None
         if cutoff is not None:
             columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].values
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
@@ -229,7 +233,9 @@ class MLManager:
         else:
             try: df_treeimp = getattr(self, "features_treeimp")
             except AttributeError:
-                self.logger.raise_error(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.warning(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.info("END")
+                return None
         columns_sort = df_treeimp.index.values.copy()
         self.columns = np.concatenate([columns_sort[isin_compare_string(columns_sort, self.columns)], self.columns[~isin_compare_string(self.columns, columns_sort)]])
         if cutoff is not None:
@@ -261,7 +267,9 @@ class MLManager:
         else:
             try: df_adv = getattr(self, "features_adversarial")
             except AttributeError:
-                self.logger.raise_error(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.warning(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
+                self.logger.info("END")
+                return None
         if cutoff is not None:
             columns_del = df_adv.index[df_adv["ratio"] >= cutoff]
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
@@ -744,7 +752,7 @@ class ChainModel:
         logger.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
         if isinstance(input_x, pd.DataFrame):
-            input_x, _, _ = self.list_mlmanager[0].proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
+            input_x, _, _ = self.list_mlmanager[0].proc_call(input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         else:
             assert isinstance(input_x, np.ndarray)
         dict_output = {"ndf": input_x, "np": np, "pd": pd}
@@ -754,7 +762,7 @@ class ChainModel:
             input_string         = dictwk["input_string"]
             logger.info(f"model: {model_name} predict.")
             if input_string is None:
-                output, _, _ = mlmanager.predict(df=df, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
+                output, _, _ = mlmanager.predict(df=input_x, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             else:
                 input        = eval(input_string, {}, dict_output)
                 output, _, _ = mlmanager.predict(df=None, input_x=input, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
