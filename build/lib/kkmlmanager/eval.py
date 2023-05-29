@@ -102,12 +102,16 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         se["logloss"]        = (-1 * input_y        * np.log(ndf_pred)).sum(axis=1).mean()
         se["logloss_argmax"] = (-1 * input_y_argmax * np.log(ndf_pred)).sum(axis=1).mean()
         for i in np.arange(n_class):
-            se[f"binary_logloss_{i}"] = log_loss(input_y_argmax[:, i], ndf_pred[:, i])
+            try: tmp = log_loss(input_y_argmax[:, i], ndf_pred[:, i])
+            except ValueError: tmp = float("nan")
+            se[f"binary_logloss_{i}"] = tmp
         for i in range(1, n_class+1):
             strlen=len(str(n_class))
             se[f"acc_top{str(i).zfill(strlen)}"] = accuracy_top_k(input_y_class, ndf_pred, top_k=i)
         for i in np.arange(n_class):
-            se[f"auc_{i}"] = roc_auc_score(input_y_argmax[:, i], ndf_pred[:, i])
+            try: tmp = roc_auc_score(input_y_argmax[:, i], ndf_pred[:, i])
+            except ValueError: tmp = float("nan")
+            se[f"auc_{i}"] = tmp
         weight = np.bincount(input_y_class, minlength=n_class)
         se["auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
         se["auc_all"]   = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
