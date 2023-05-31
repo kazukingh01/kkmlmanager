@@ -398,7 +398,7 @@ class MLManager:
             if is_calib_cv:
                 self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
                 valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{i}") for i in list_cv], axis=0, ignore_index=True)
-                input_x  = valid_df.loc[:, self.valid_df.columns.str.contains("^predict_proba_", regex=True)].values
+                input_x  = valid_df.loc[:, valid_df.columns.str.contains("^predict_proba_", regex=True)].values
                 input_y  = valid_df["answer"].values.astype(int)
                 self.calibration(
                     df=None, input_x=input_x, input_y=input_y, model=self.model_multi, model_func=self.model_func,
