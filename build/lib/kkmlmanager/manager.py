@@ -648,24 +648,27 @@ class MLManager:
         self.proc_exp.n_jobs = n_jobs
         self.proc_ans.n_jobs = n_jobs
 
-    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8", is_minimum: bool=False):
+    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8", is_minimum: bool=False, is_only_log: bool=False):
         self.logger.info("START")
         assert isinstance(dirpath, str)
         assert isinstance(exist_ok, bool)
         assert isinstance(remake, bool)
         assert isinstance(is_minimum, bool)
+        assert isinstance(is_only_log, bool)
         dirpath = correct_dirpath(dirpath)
         makedirs(dirpath, exist_ok=exist_ok, remake=remake)
         if filename is None: filename = f"mlmanager_{id(self)}.pickle"
         self.logger.info(f"save file: {dirpath + filename}.")
         if is_minimum:
-            with open(dirpath + filename + ".min", mode='wb') as f:
-                pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=4)
+            if is_only_log == False:
+                with open(dirpath + filename + ".min", mode='wb') as f:
+                    pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=4)
             with open(dirpath + filename + ".min.log", mode='w', encoding=encoding) as f:
                 f.write(self.logger.internal_stream.getvalue())
         else:
-            with open(dirpath + filename, mode='wb') as f:
-                pickle.dump(self, f, protocol=4)
+            if is_only_log == False:
+                with open(dirpath + filename, mode='wb') as f:
+                    pickle.dump(self, f, protocol=4)
             with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
                 f.write(self.logger.internal_stream.getvalue())
         self.logger.info("END")
