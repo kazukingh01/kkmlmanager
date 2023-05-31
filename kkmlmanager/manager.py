@@ -384,21 +384,34 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self, is_calib: bool=False, list_cv: List[int]=None):
+    def set_cvmodel(self, is_calib: bool=False, is_calib_cv: bool=False, list_cv: List[int]=None, is_normalize: bool=False, is_binary_fit: bool=False):
         self.logger.info("START")
         assert isinstance(is_calib, bool)
+        assert isinstance(is_calib_cv, bool)
+        assert not (is_calib == False and is_calib_cv == True)
         assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
         assert list_cv is None or check_type_list(list_cv, int)
         if list_cv is None: list_cv = self.list_cv
         else:               list_cv = np.array(self.list_cv)[list_cv].tolist()
         if is_calib:
             assert self.is_calib == False
-            for i in list_cv:
-                if not hasattr(self, f"model_cv{i}_calib"):
-                    logger.raise_error(f"Please run 'calibration_cv_model' first.")
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in list_cv], func_predict=self.model_func)
+            if is_calib_cv:
+                self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
+                valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{i}") for i in list_cv], axis=0, ignore_index=True)
+                input_x  = valid_df.loc[:, self.valid_df.columns.str.contains("^predict_proba_", regex=True)].values
+                input_y  = valid_df["answer"].values.astype(int)
+                self.calibration(
+                    df=None, input_x=input_x, input_y=input_y, model=self.model_multi, model_func=self.model_func,
+                    is_use_valid=False, is_predict=False, is_normalize=is_normalize, is_binary_fit=is_binary_fit, n_bins=50
+                )
+                self.model_multi = self.calibrater
+            else:
+                for i in list_cv:
+                    if not hasattr(self, f"model_cv{i}_calib"):
+                        logger.raise_error(f"Please run 'calibration_cv_model' first.")
+                self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in list_cv], func_predict=self.model_func)
         else:
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}")       for i in list_cv], func_predict=self.model_func)
+            self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
@@ -559,8 +572,8 @@ class MLManager:
         self.logger.info("END")
 
     def calibration(
-        self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, is_use_valid: bool=False,
-        is_predict: bool=False, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10
+        self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, model=None, model_func: str=None,
+        is_use_valid: bool=False, is_predict: bool=False, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10
     ):
         """
         None::
@@ -581,6 +594,8 @@ class MLManager:
         assert isinstance(is_predict,    bool)
         assert isinstance(is_normalize,  bool)
         assert isinstance(is_binary_fit, bool)
+        if model      is None: model      = self.model
+        if model_func is None: model_func = self.model_func
         if is_use_valid:
             assert is_predict == False
             assert hasattr(self, "eval_valid_df") and isinstance(self.eval_valid_df, pd.DataFrame) and self.eval_valid_df.shape[0] > 0
@@ -602,7 +617,7 @@ class MLManager:
         assert isinstance(input_x, np.ndarray)
         assert isinstance(input_y, np.ndarray)
         assert input_x.shape[0] == input_y.shape[0]
-        self.calibrater = Calibrater(self.model, self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
+        self.calibrater = Calibrater(model, model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
         self.logger.info("calibration start...")
         self.calibrater.fit(input_x, input_y, n_bins=n_bins)
         self.logger.info("calibration end...")
