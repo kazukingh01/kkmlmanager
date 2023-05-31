@@ -80,6 +80,8 @@ class Calibrater:
         self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
         self.calibrater.fit(input_x, input_y, *args, **kwargs)
         output          = self.predict_common(input_x, is_mock=True)
+        if len(output.shape) == 1:
+            output      = np.stack([1 - output, output]).T
         self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         logger.info("END")
         
@@ -91,6 +93,7 @@ class Calibrater:
         """
         logger.info(f"START {self.__class__}")
         logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, is_normalize: {self.is_normalize}, is_binary_fit: {self.is_binary_fit}")
+        is_binary = False
         if is_mock:
             output = input_x
         else:
@@ -98,7 +101,8 @@ class Calibrater:
             if len(output.shape) == 1:
                 # You must be careful when model is trained by binary logloss
                 # Calibration require the shape has more than 2 even if output's shape has only 1 because of being trained by binary.
-                output = np.stack([1 - output, output]).T
+                output    = np.stack([1 - output, output]).T
+                is_binary = True
         funcname = "predict" if self.is_reg else "predict_proba"
         classes  = output.shape[-1]
         if self.is_binary_fit:
@@ -113,6 +117,9 @@ class Calibrater:
         if self.is_normalize:
             logger.info("normalize output ...")
             output = (output / output.sum(axis=-1).reshape(-1, 1))
+        if is_binary:
+            # return to same shape as model's output
+            output = output[:, -1]
         logger.info("END")
         return output
 
