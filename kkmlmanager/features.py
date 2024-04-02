@@ -1,4 +1,3 @@
-from typing import List
 import pandas as pd
 import numpy as np
 import torch
@@ -533,7 +532,7 @@ def get_sklearn_trees_model_info(model) -> pd.DataFrame:
     return df
 
 def get_features_by_randomtree_importance(
-    df: pd.DataFrame, columns_exp: List[str], columns_ans: str, dtype=np.float32, batch_size: int=25,
+    df: pd.DataFrame, columns_exp: list[str], columns_ans: str, dtype=np.float32, batch_size: int=25,
     is_reg: bool=False, max_iter: int=1, min_count: int=100, n_jobs: int=1, 
     **kwargs
 ) -> pd.DataFrame:
@@ -595,7 +594,7 @@ def get_features_by_randomtree_importance(
     return df_feadtures
 
 def get_features_by_adversarial_validation(
-    df_train: pd.DataFrame, df_test: pd.DataFrame, columns_exp: List[str], columns_ans: str=None,
+    df_train: pd.DataFrame, df_test: pd.DataFrame, columns_exp: list[str], columns_ans: str=None,
     n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, n_jobs: int=1, **kwargs
 ):
     logger.info("START")
@@ -625,7 +624,7 @@ def get_features_by_adversarial_validation(
     logger.info(f"input: {ndf_x.shape}, target: {ndf_y.shape}")
     # model
     dictwk = {
-        "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"auto",
+        "bootstrap":False, "n_estimators": max(n_jobs*10, 100), "max_depth": None, "max_features":"sqrt",
         "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state": 0, "n_jobs": n_jobs
     }
     for x, y in kwargs.items():

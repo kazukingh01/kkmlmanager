@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
-from typing import List, Union
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, QuantileTransformer, OneHotEncoder
 from sklearn.decomposition import PCA
+import umap
 
 # local package
 from kkmlmanager.util.dataframe import astype_faster, query
@@ -28,6 +28,7 @@ __all__ = [
     "ProcReshape",
     "ProcDropNa",
     "ProcCondition",
+    "ProcEval",
 ]
 
 
@@ -37,34 +38,37 @@ class BaseProc:
         assert isinstance(is_jobs_fix, bool)
         self.is_check    = False
         self.is_fit      = False
-        self.is_df       = False
+        self.is_df_in    = False
+        self.is_df_out   = False
         self.n_jobs      = n_jobs
         self.is_jobs_fix = is_jobs_fix
-    def fit(self, input: Union[pd.DataFrame, np.ndarray], *args, **kwargs):
+    def fit(self, input: pd.DataFrame | np.ndarray, *args, **kwargs):
         assert check_type(input, [pd.DataFrame, np.ndarray])
-        self.is_df = isinstance(input, pd.DataFrame)
-        if self.is_df: self.shape_in = input.columns.copy()
-        else:          self.shape_in = input.shape[1:]
+        self.is_df_in = isinstance(input, pd.DataFrame)
+        if self.is_df_in: self.shape_in = input.columns.copy()
+        else:             self.shape_in = input.shape[1:]
         output = self.fit_main(input, *args, **kwargs)
         self.is_fit = True
         if output is None:
-            output = self(input, *args, **kwargs)
-        is_df = isinstance(output, pd.DataFrame)
-        if is_df: self.shape_out = output.columns.copy()
-        else:     self.shape_out = output.shape[1:]
+            output = self(input, *args, is_check=False, **kwargs)
+        self.is_df_out = isinstance(output, pd.DataFrame)
+        if self.is_df_out: self.shape_out = output.columns.copy()
+        else:              self.shape_out = output.shape[1:]
         return output
-    def __call__(self, input: Union[pd.DataFrame, np.ndarray], *args, n_jobs: int=None, **kwargs):
+    def __call__(self, input: pd.DataFrame | np.ndarray, *args, n_jobs: int=None, is_check: bool=None, **kwargs):
+        if is_check is not None: assert isinstance(is_check, bool)
+        else: is_check = self.is_check
         if not self.is_fit: raise Exception("You must use 'fit' first.")
         if self.is_jobs_fix == False and n_jobs is not None: self.n_jobs = n_jobs
-        if self.is_check:
-            if self.is_df:
+        if is_check:
+            if self.is_df_in:
                 assert len(self.shape_in) == len(input.columns)
                 assert np.all(self.shape_in == input.columns)
             else:
                 assert self.shape_in == input.shape[1:]
         output = self.call_main(input, *args, **kwargs)
-        if self.is_check:
-            if self.is_df:
+        if is_check:
+            if self.is_df_out:
                 assert len(self.shape_out) == len(output.columns)
                 assert np.all(self.shape_out == output.columns)
             else:
@@ -112,8 +116,15 @@ class ProcOneHotEncoder(ProcSKLearn):
     def call_main(self, input):
         return self.proc.transform(input).toarray()
 
+class ProcUMAP(ProcSKLearn):
+    """
+    see: https://github.com/lmcinnes/umap
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(umap.UMAP, *args, **kwargs)
+
 class ProcFillNa(BaseProc):
-    def __init__(self, fill_value: Union[str, int, float], **kwargs):
+    def __init__(self, fill_value: str | int | float, **kwargs):
         assert check_type(fill_value, [str, int, float, list, np.ndarray])
         if isinstance(fill_value, str):
             assert fill_value in ["mean", "max", "min", "median"]
@@ -123,7 +134,7 @@ class ProcFillNa(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(fill_value: {self.fill_value})'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             if isinstance(self.fill_value, str):
                 self.fit_values = getattr(input, self.fill_value)(axis=0).values
         else:
@@ -142,7 +153,7 @@ class ProcFillNa(BaseProc):
         assert check_type(self.fit_values, [int, float, np.ndarray])
     def call_main(self, input):
         output = input # Don't use copy()
-        if self.is_df:
+        if self.is_df_in:
             if isinstance(self.fit_values, np.ndarray):
                 output = output.fillna({x: y for x, y in zip(output.columns, self.fit_values)})
             else:
@@ -166,7 +177,7 @@ class ProcFillNaMinMax(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}()'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be np.ndarray")
         assert len(input.shape) == 2
         fit_min = np.nanmin(input, axis=0) - self.add_value
@@ -181,8 +192,8 @@ class ProcFillNaMinMax(BaseProc):
 
 class ProcReplaceValue(BaseProc):
     def __init__(
-        self, target_value: Union[int, float, str], replace_value: Union[int, float, str], 
-        indexes: Union[int, str, List[int], List[str]]=None, **kwargs
+        self, target_value: int | float | str, replace_value: int | float | str, 
+        indexes: int | str | list[int] | list[str]=None, **kwargs
     ):
         assert check_type(target_value,  [int, float, str])
         assert check_type(replace_value, [int, float, str])
@@ -196,20 +207,20 @@ class ProcReplaceValue(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(target_value: {self.target_value}, replace_value: {self.replace_value})'
     def fit_main(self, input):
-        if not self.is_df:
+        if not self.is_df_in:
             assert len(input.shape) == 2
         if self.indexes is None:
             self.indexes = slice(None)
         elif self.indexes == slice(None):
             pass
         else:
-            if self.is_df:
+            if self.is_df_in:
                 assert check_type_list(self.indexes, str)
             else:
                 assert check_type_list(self.indexes, int)
     def call_main(self, input):
         output = input
-        if self.is_df:
+        if self.is_df_in:
             output.loc[:, self.indexes] = output.loc[:, self.indexes].replace(self.target_value, self.replace_value)
         else:
             ndf = output[:, self.indexes]
@@ -227,7 +238,7 @@ class ProcReplaceInf(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(posinf: {self.posinf}, neginf: {self.neginf})'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be np.ndarray")
     def call_main(self, input):
         output = input
@@ -240,13 +251,13 @@ class ProcToValues(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}()'
     def fit_main(self, input):
-        if not self.is_df:
+        if not self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be pd.DataFrame")
     def call_main(self, input):
         return input.values
 
 class ProcDictMap(BaseProc):
-    def __init__(self, values: dict, index: Union[int, str], **kwargs):
+    def __init__(self, values: dict, index: int | str, **kwargs):
         assert isinstance(values, dict) and len(values) > 0
         assert check_type(index, [int, str])
         super().__init__(**kwargs)
@@ -255,14 +266,14 @@ class ProcDictMap(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(index: {self.index}, values: {self.values})'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             assert isinstance(self.index, str)
         else:
             assert len(input.shape) == 2
             assert isinstance(self.index, int)
     def call_main(self, input):
         output = input
-        if self.is_df:
+        if self.is_df_in:
             output[self.index] = output[self.index].map(self.values)
         else:
             ndf = output[:, self.index].copy()
@@ -272,7 +283,7 @@ class ProcDictMap(BaseProc):
         return output
 
 class ProcAsType(BaseProc):
-    def __init__(self, convert_type: type, indexes: Union[str, List[str]]=None, batch_size: int=1, **kwargs):
+    def __init__(self, convert_type: type, indexes: str | list[str]=None, batch_size: int=1, **kwargs):
         assert isinstance(convert_type, type)
         super().__init__(**kwargs)
         self.convert_type = convert_type
@@ -281,7 +292,7 @@ class ProcAsType(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(convert_type: {self.convert_type})'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             if self.indexes is None:
                 self.indexes = slice(None)
             elif self.indexes == slice(None):
@@ -294,7 +305,7 @@ class ProcAsType(BaseProc):
             assert self.indexes is None
     def call_main(self, input):
         output = input
-        if self.is_df:
+        if self.is_df_in:
             output = astype_faster(output, list_astype=[{"from": self.indexes, "to": self.convert_type}], batch_size=self.batch_size, n_jobs=self.n_jobs)
         else:
             output = output.astype(self.convert_type)
@@ -308,13 +319,13 @@ class ProcReshape(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(reshape: {self.reshape})'
     def fit_main(self, input):
-        if self.is_df:
+        if self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be np.ndarray")
     def call_main(self, input):
         return input.reshape(*self.reshape)
 
 class ProcDropNa(BaseProc):
-    def __init__(self, columns: Union[str, List[str]], **kwargs):
+    def __init__(self, columns: str | list[str], **kwargs):
         if isinstance(columns, str): columns = [columns, ]
         assert check_type_list(columns, str)
         super().__init__(**kwargs)
@@ -322,7 +333,7 @@ class ProcDropNa(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(columns: {self.columns})'
     def fit_main(self, input):
-        if not self.is_df:
+        if not self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be pd.DataFrame")
     def call_main(self, input):
         return input.dropna(subset=self.columns)
@@ -335,8 +346,40 @@ class ProcCondition(BaseProc):
     def __str__(self):
         return f'{self.__class__.__name__}(query_string: {self.query_string})'
     def fit_main(self, input):
-        if not self.is_df:
+        if not self.is_df_in:
             raise Exception(f"{self.__class__.__name__}'s input must be pd.DataFrame")
     def call_main(self, input):
         ndf_bool = query(input, self.query_string)
         return input.loc[ndf_bool, :]
+
+class ProcDigitize(BaseProc):
+    def __init__(self, bins: list[int] | list[float], is_percentile: bool=False, **kwargs):
+        assert check_type_list(bins, [int, float])
+        assert isinstance(is_percentile, bool)
+        super().__init__(**kwargs)
+        self.bins  = bins
+        self._bins = []
+        self.is_percentile = is_percentile
+    def __str__(self):
+        return f'{self.__class__.__name__}(bins: {self.bins}, _bins: {self._bins})'
+    def fit_main(self, input):
+        if self.is_df_in:
+            raise Exception(f"{self.__class__.__name__}'s input must be np.ndarray")
+        if self.is_percentile:
+            self._bins = [np.percentile(input, x) for x in self.bins]
+        else:
+            self._bins = self.bins
+    def call_main(self, input):
+        return np.digitize(input, self._bins)
+
+class ProcEval(BaseProc):
+    def __init__(self, eval_string: str, **kwargs):
+        assert isinstance(eval_string, str)
+        super().__init__(**kwargs)
+        self.eval_string = eval_string
+    def __str__(self):
+        return f'{self.__class__.__name__}(eval_string: {self.eval_string})'
+    def fit_main(self, *args, **kwargs):
+        pass
+    def call_main(self, input):
+        return eval(self.eval_string, {"pd": pd, "np": np, "__input": input}, {})

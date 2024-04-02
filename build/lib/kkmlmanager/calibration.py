@@ -1,4 +1,3 @@
-from typing import List
 import numpy as np
 from functools import partial
 from sklearn.base import BaseEstimator

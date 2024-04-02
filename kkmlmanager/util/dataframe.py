@@ -1,7 +1,6 @@
 import re
 import pandas as pd
 import numpy as np
-from typing import List
 from joblib import Parallel, delayed
 from functools import partial
 
@@ -57,7 +56,7 @@ def parallel_apply(df: pd.DataFrame, func, axis: int=0, group_key=None, func_aft
     else:
         return list_object
 
-def astype_faster(df: pd.DataFrame, list_astype: List[dict]=[], batch_size: int=1, n_jobs: int=1):
+def astype_faster(df: pd.DataFrame, list_astype: list[dict]=[], batch_size: int=1, n_jobs: int=1):
     """
     list_astype:
         [{"from": from_dtype, "to": to_dtype}, {...}]
@@ -109,7 +108,7 @@ def query(df: pd.DataFrame, str_where: str):
             list_bool.append(phrase)
         else:
             colname, operator, value = [x.strip() for x in re.split("( = | > | < | >= | <= | in )", phrase)]
-            if len(re.findall("^\[.+\]$", value)) > 0:
+            if len(re.findall(r"^\[.+\]$", value)) > 0:
                 value = [x.strip() for x in value[1:-1].split(",")]
                 value = [int(x) if x.find("'") < 0 else x for x in value]
             elif value.find("'") < 0:

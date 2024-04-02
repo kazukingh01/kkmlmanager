@@ -2,7 +2,6 @@ import sys, pickle, os, copy
 from functools import partial
 import numpy as np
 import pandas as pd
-from typing import List, Union
 from sklearn.model_selection import StratifiedKFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 
@@ -25,10 +24,14 @@ __all__ = [
 
 
 class MLManager:
+    """
+    Usage::
+        see: https://github.com/kazukingh01/kkmlmanager/tree/main/tests
+    """
     def __init__(
         self,
         # model parameter
-        columns_exp: List[str], columns_ans: Union[str, List[str]], columns_otr: List[str]=None, is_reg: bool=False, 
+        columns_exp: list[str], columns_ans: str | list[str], columns_otr: list[str]=None, is_reg: bool=False, 
         # common parameter
         outdir: str="./output/", random_seed: int=1, n_jobs: int=1
     ):
@@ -70,9 +73,9 @@ class MLManager:
         self.list_cv      = []
         self.columns_hist = [self.columns_exp.copy(), ]
         self.columns      = self.columns_exp.copy()
-        self.proc_row     = RegistryProc(n_jobs=self.n_jobs)
-        self.proc_exp     = RegistryProc(n_jobs=self.n_jobs)
-        self.proc_ans     = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_row     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=False)
+        self.proc_exp     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
+        self.proc_ans     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
         self.proc_check_init()
         self.logger.info("END")
     
@@ -137,7 +140,7 @@ class MLManager:
         self.is_calib    = False
         self.logger.info("END")
 
-    def update_features(self, features: Union[List[str], np.ndarray]):
+    def update_features(self, features: list[str] | np.ndarray):
         self.logger.info("START")
         assert check_type(features, [np.ndarray, list])
         if isinstance(features, list):
@@ -247,7 +250,7 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: Union[int, float]=None, 
+        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: int | float=None, 
         n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, **kwargs
     ):
         self.logger.info("START")
@@ -280,7 +283,7 @@ class MLManager:
 
     def cut_features_auto(
         self, df: pd.DataFrame=None, df_test: pd.DataFrame=None, 
-        list_proc: List[str] = [
+        list_proc: list[str] = [
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False, batch_size=128)",
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True,  batch_size=128)",
             "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000, dtype=np.float32, batch_size=25)",
@@ -315,9 +318,9 @@ class MLManager:
         for x, y in dict_proc.items():
             assert x in ["row", "exp", "ans"]
             assert check_type_list(y, str)
-        self.proc_row = RegistryProc(n_jobs=self.n_jobs)
-        self.proc_exp = RegistryProc(n_jobs=self.n_jobs)
-        self.proc_ans = RegistryProc(n_jobs=self.n_jobs)
+        self.proc_row = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=False)
+        self.proc_exp = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
+        self.proc_ans = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
         for _type in ["row", "exp", "ans"]:
             if _type in dict_proc:
                 for x in dict_proc[_type]:
@@ -331,7 +334,6 @@ class MLManager:
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
         self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
-        df = df[self.columns.tolist() + self.columns_ans.tolist() + self.columns_otr[~np.isin(self.columns_otr, self.columns_ans)].tolist()].copy()
         self.logger.info("proc fit: row")
         df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
         self.logger.info(f"df shape: {df.shape}")
@@ -384,7 +386,7 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self, is_calib: bool=False, is_calib_cv: bool=False, list_cv: List[int]=None, is_normalize: bool=False, is_binary_fit: bool=False):
+    def set_cvmodel(self, is_calib: bool=False, is_calib_cv: bool=False, list_cv: list[int]=None, is_normalize: bool=False, is_binary_fit: bool=False):
         self.logger.info("START")
         assert isinstance(is_calib, bool)
         assert isinstance(is_calib_cv, bool)
@@ -427,7 +429,7 @@ class MLManager:
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
-        params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False
+        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False
     ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
@@ -484,9 +486,9 @@ class MLManager:
 
     def fit_cross_validation(
             self, df_train: pd.DataFrame,
-            n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: List[str]=None,
-            n_cv: int=None, indexes_train: List[np.ndarray]=None, indexes_valid: List[np.ndarray]=None,
-            params_fit: Union[str, dict]="{}", params_fit_evaldict: dict={},
+            n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
+            n_cv: int=None, indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
+            params_fit: str | dict="{}", params_fit_evaldict: dict={},
             is_proc_fit_every_cv: bool=True, is_save_model: bool=False
         ):
         self.logger.info("START")
@@ -707,7 +709,7 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
 
 
 class MultiModel:
-    def __init__(self, models: List[object], func_predict: str):
+    def __init__(self, models: list[object], func_predict: str):
         assert isinstance(models, list) and len(models) > 0
         assert isinstance(func_predict, str)
         self.classes_ = models[0].classes_ if hasattr(models[0], "classes_") else None
@@ -718,7 +720,7 @@ class MultiModel:
         self.models       = models
         self.func_predict = func_predict
         setattr(self, self.func_predict, partial(self.predict_common, funcname=self.func_predict))
-    def predict_common(self, input: np.ndarray, weight: List[float]=None, funcname: str="predict", **kwargs):
+    def predict_common(self, input: np.ndarray, weight: list[float]=None, funcname: str="predict", **kwargs):
         logger.info(f"START {self.__class__}")
         logger.info(f"func predict name: {funcname}")
         assert isinstance(input, np.ndarray)
@@ -766,7 +768,7 @@ class ChainModel:
         self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
         logger.info("END")
 
-    def predict(self, input_x: Union[np.ndarray, pd.DataFrame], is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
+    def predict(self, input_x: np.ndarray | pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
         logger.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
         if isinstance(input_x, pd.DataFrame):

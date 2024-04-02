@@ -1,5 +1,4 @@
 import sys, logging, io, os, datetime
-from typing import List, Union
 
 
 __all__ = [
@@ -109,8 +108,8 @@ class MyLogger(logging.Logger):
 def set_logger(
     name: str, log_level: str="info", 
     internal_log: bool=False, logfilepath: str=None, is_newlogfile: bool=False,
-    color_info:    Union[str, List[str]]=None,               color_debug: Union[str, List[str]]=None,
-    color_warning: Union[str, List[str]]=["BOLD", "YELLOW"], color_error: Union[str, List[str]]= ["BOLD", "RED"]
+    color_info:    str | list[str]=None,               color_debug: str | list[str]=None,
+    color_warning: str | list[str]=["BOLD", "YELLOW"], color_error: str | list[str]=["BOLD", "RED"]
 ) -> MyLogger:
     """
     Return the address in the logging namespace

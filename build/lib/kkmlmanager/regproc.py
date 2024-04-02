@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from typing import List, Union
 
 # local package
 import kkmlmanager.procs as kkprocs
@@ -16,15 +15,17 @@ __all__ = [
 
 
 class RegistryProc(object):
-    def __init__(self, n_jobs: int=1):
+    def __init__(self, n_jobs: int=1, is_auto_colslct: bool=False):
         """
         Usage::
             >>> 
         """
         assert isinstance(n_jobs, int) and n_jobs >= 1
+        assert isinstance(is_auto_colslct, bool)
         super().__init__()
-        self.procs: List[BaseProc] = []
-        self.n_jobs = n_jobs
+        self.procs: list[BaseProc] = []
+        self.n_jobs                = n_jobs
+        self.is_auto_colslct       = is_auto_colslct
         self.initialize()
     
     def __str__(self):
@@ -32,11 +33,11 @@ class RegistryProc(object):
 
     def initialize(self):
         self.is_fit   = False
-        self.is_check = False
+        self.is_check = True
         self.shape    = None
         self.check_proc(self.is_check)
     
-    def register(self, proc: Union[str, BaseProc], *args, **kwargs):
+    def register(self, proc: str | BaseProc, *args, **kwargs):
         if isinstance(proc, str):
             if "n_jobs" not in kwargs: kwargs["n_jobs"] = self.n_jobs
             proc = getattr(kkprocs, proc)(*args, **kwargs)
@@ -50,7 +51,7 @@ class RegistryProc(object):
         for proc in self.procs:
             proc.is_check = is_check
     
-    def fit(self, input: Union[pd.DataFrame, np.ndarray], check_inout: List[str]=None):
+    def fit(self, input: pd.DataFrame | np.ndarray, check_inout: list[str]=None):
         logger.info("START")
         assert check_type(input, [pd.DataFrame, np.ndarray])
         if check_inout is None: check_inout = []
@@ -75,22 +76,24 @@ class RegistryProc(object):
         logger.info("END")
         return output
     
-    def __call__(self, input: Union[pd.DataFrame, np.ndarray]):
+    def __call__(self, input: pd.DataFrame | np.ndarray, exec_procs: list[int]=[]):
         logger.info("START")
         assert self.is_fit
         assert check_type(input, [pd.DataFrame, np.ndarray])
+        assert check_type_list(exec_procs, int)
         if isinstance(input, pd.DataFrame):
+            if self.is_auto_colslct:
+                input = input.loc[:, self.shape]
             if self.is_check:
                 assert input.columns.isin(self.shape).sum() == self.shape.shape[0]
-                output = input.loc[:, self.shape].copy()
-            else:
-                output = input.copy()
         else:
             if self.is_check:
                 assert input.shape[1:] == self.shape
-            output = input
+        output = input.copy()
         logger.info(f"input: {__class__.info_value(output)}")
-        for proc in self.procs:
+        if len(exec_procs) == 0: procs = self.procs
+        else: procs = [self.procs[i] for i in exec_procs]
+        for proc in procs:
             logger.info(f"proc: {proc}")
             output = proc(output, n_jobs=self.n_jobs)
             logger.info(f"output: {__class__.info_value(output)}")
@@ -98,7 +101,7 @@ class RegistryProc(object):
         return output
 
     @classmethod
-    def info_value(cls, value: Union[pd.DataFrame, np.ndarray]):
+    def info_value(cls, value: pd.DataFrame | np.ndarray):
         if isinstance(value, pd.DataFrame):
             return f"df: {value.shape}"
         elif isinstance(value, np.ndarray):
