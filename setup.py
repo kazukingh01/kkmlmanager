@@ -10,7 +10,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='kkmlmanager',
-    version='1.2.3',
+    version='1.2.4',
     description='usefule library for ML (mainly for table data).',
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -110,7 +110,7 @@ class Calibrater(BaseModel):
         if self.is_binary_fit:
             logger.info("set for binary fitting.")
             assert input_x.shape[-1] >= 3
-            assert self.classes_ == np.arange(input_x.shape[-1], dtype=self.classes_.dtype)
+            assert np.all(self.classes_ == np.arange(input_x.shape[-1], dtype=self.classes_.dtype))
             assert self.is_reg == False
             input_y = np.eye(input_x.shape[-1])[input_y].reshape(-1).astype(int)
             input_x = input_x.reshape(-1, 1)
