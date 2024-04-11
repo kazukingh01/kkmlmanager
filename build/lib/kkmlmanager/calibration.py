@@ -71,7 +71,7 @@ class Calibrater(BaseModel):
         if is_reg:
             assert is_binary_fit == False
             assert is_normalize  == False
-        logger.info(f"model: {model}, func_predict: {func_predict}, is_normalize: {is_normalize}, is_reg: {is_reg}")
+        logger.info(f"model: {model}, func_predict: {func_predict}, is_normalize: {is_normalize}, is_reg: {is_reg}, is_binary_fit: {is_binary_fit}")
         self.model         = model
         self.calibrater    = MultiLabelIsotonicRegression()
         self.func_predict  = func_predict
@@ -110,10 +110,10 @@ class Calibrater(BaseModel):
         if self.is_binary_fit:
             logger.info("set for binary fitting.")
             assert input_x.shape[-1] >= 3
+            assert self.classes_ == np.arange(input_x.shape[-1], dtype=self.classes_.dtype)
             assert self.is_reg == False
             input_y = np.eye(input_x.shape[-1])[input_y].reshape(-1).astype(int)
             input_x = input_x.reshape(-1, 1)
-            input_x = np.concatenate([1 - input_x, input_x], axis=-1)
             self.classes_ = np.array([0, 1])
         self.calibrater.fit(input_x, input_y, *args, **kwargs)
         output = self.predict_common(input_x, is_mock=True)
@@ -136,15 +136,12 @@ class Calibrater(BaseModel):
         else:
             output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
             if len(output.shape) == 1:
-                # You must be careful when model is trained by binary logloss
-                # Calibration require the shape has more than 2 even if output's shape has only 1 because of being trained by binary.
-                output    = np.stack([1 - output, output]).T
+                output    = output.reshape(-1, 1)
                 is_binary = True
-        classes  = output.shape[-1]
+        classes = output.shape[-1]
         if self.is_binary_fit:
             logger.info("binary fitting mode.")
             output = output.reshape(-1, 1)
-            output = np.concatenate([1 - output, output], axis=-1)
         logger.info("calibrate output ...")
         output = self.calibrater.predict(output)
         if self.is_binary_fit:
