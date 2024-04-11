@@ -64,7 +64,7 @@ class MLManager:
         self.model_class  = None
         self.model_args   = None
         self.model_kwargs = None
-        self.model_multi: MultiModel = None
+        self.model_multi: MultiModel | Calibrater = None
         self.is_cvmodel   = False
         self.calibrater: Calibrater = None
         self.is_fit       = False
@@ -109,7 +109,8 @@ class MLManager:
                 "calibrater":  self.calibrater.to_json() if self.calibrater is not None else None,
                 "model_multi": (
                     (self.model_multi.to_json() if self.model_multi is not None else {}) | 
-                    ({"calib": self.model_multi.models[0].to_json()} if self.model_multi is not None and isinstance(self.model_multi.models[0], Calibrater) else {})
+                    ({"calib": self.model_multi.models[0].to_json()} if self.model_multi is not None and isinstance(self.model_multi, MultiModel) and isinstance(self.model_multi.models[0], Calibrater) else {}) |
+                    ({"calib": self.model_multi.to_json()} if self.model_multi is not None and isinstance(self.model_multi, Calibrater) else {})
                 ),
             },
             "eval": {
