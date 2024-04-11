@@ -29,12 +29,12 @@ class RegistryProc(object):
         self.initialize()
     
     def __str__(self):
-        return str([str(x) for x in self.procs])
+        return f"{__class__.__name__}(n_jobs={self.n_jobs}, is_auto_colslct={self.is_auto_colslct}, is_fit={self.is_fit}, shape={self.shape}), procs={[str(x) for x in self.procs]}"
 
     def initialize(self):
         self.is_fit   = False
         self.is_check = True
-        self.shape    = None
+        self.shape: pd.Index | tuple = None
         self.check_proc(self.is_check)
     
     def register(self, proc: str | BaseProc, *args, **kwargs):
@@ -59,9 +59,9 @@ class RegistryProc(object):
         for x in check_inout: assert x in ["class", "row", "col"]
         if isinstance(input, pd.DataFrame):
             assert input.columns.dtype == object
-            self.shape = input.columns.copy()
+            self.shape: pd.Index = input.columns.copy()
         else:
-            self.shape = input.shape[1:]
+            self.shape: tuple = input.shape[1:]
         output = input.copy()
         logger.info(f"input: {__class__.info_value(output)}")
         for proc in self.procs:

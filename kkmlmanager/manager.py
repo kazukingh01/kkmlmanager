@@ -1,5 +1,4 @@
 import sys, pickle, os, copy
-from functools import partial
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -9,6 +8,7 @@ from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from kkmlmanager.regproc import RegistryProc
 from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
 from kkmlmanager.eval import eval_model
+from kkmlmanager.models import MultiModel
 from kkmlmanager.calibration import Calibrater
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
@@ -19,7 +19,6 @@ logger = set_logger(__name__)
 __all__ = [
     "MLManager",
     "load_manager",
-    "MultiModel",
 ]
 
 
@@ -55,7 +54,7 @@ class MLManager:
         self.n_jobs      = n_jobs
         self.initialize()
         self.logger.info("END")
-
+    
     def __str__(self):
         return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_otr}"
 
@@ -65,9 +64,9 @@ class MLManager:
         self.model_class  = None
         self.model_args   = None
         self.model_kwargs = None
-        self.model_multi  = None
+        self.model_multi: MultiModel = None
         self.is_cvmodel   = False
-        self.calibrater   = None
+        self.calibrater: Calibrater = None
         self.is_fit       = False
         self.is_calib     = False
         self.list_cv      = []
@@ -77,8 +76,49 @@ class MLManager:
         self.proc_exp     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
         self.proc_ans     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
         self.proc_check_init()
+        self.eval_train_se: pd.Series    = pd.Series(   dtype=object)
+        self.eval_train_df: pd.DataFrame = pd.DataFrame(dtype=object)
+        self.eval_valid_se: pd.Series    = pd.Series(   dtype=object)
+        self.eval_valid_df: pd.DataFrame = pd.DataFrame(dtype=object)
+        self.eval_test_se:  pd.Series    = pd.Series(   dtype=object)
+        self.eval_test_df:  pd.DataFrame = pd.DataFrame(dtype=object)
         self.logger.info("END")
     
+    def to_json(self, is_detail: bool=False):
+        assert isinstance(is_detail, bool)
+        return {
+            "base": {
+                "input":  self.columns.tolist() if is_detail else len(self.columns),
+                "target": self.columns_ans.tolist(),
+                "is_reg": self.is_reg,
+                "random_seed": self.random_seed,
+                "n_jobs": self.n_jobs,
+            },
+            "preproc": {
+                "proc_row": str(self.proc_row),
+                "proc_exp": str(self.proc_exp),
+                "proc_ans": str(self.proc_ans),
+            },
+            "model": {
+                "is_fit": self.is_fit,
+                "is_calib": self.is_calib,
+                "is_cvmodel": self.is_cvmodel,
+                "mode": self.get_model_mode(),
+                "cv": len(self.list_cv),
+                "model": self.model.to_json() if self.model.__class__.__name__ == "KkGBDT" else str(self.model),
+                "calibrater":  self.calibrater.to_json() if self.calibrater is not None else None,
+                "model_multi": (
+                    (self.model_multi.to_json() if self.model_multi is not None else {}) | 
+                    ({"calib": self.model_multi.models[0].to_json()} if self.model_multi is not None and isinstance(self.model_multi.models[0], Calibrater) else {})
+                ),
+            },
+            "eval": {
+                "train": self.eval_train_se.to_dict(),
+                "valid": [getattr(self, f"eval_valid_se_cv{x}").to_dict() for x in self.list_cv] if len(self.list_cv) > 0 else self.eval_valid_se.to_dict(),
+                "test" : self.eval_test_se.to_dict(),
+            }
+        }
+
     def copy(self, is_minimum: bool=False):
         assert isinstance(is_minimum, bool)
         if is_minimum:
@@ -102,13 +142,14 @@ class MLManager:
             ins.proc_ans     = copy.deepcopy(self.proc_ans)
             ins.is_fit       = self.is_fit
             ins.is_cvmodel   = self.is_cvmodel
+            ins.is_calib     = self.is_calib
             ins.list_cv      = copy.deepcopy(self.list_cv)
-            if ins.is_cvmodel:
+            model_mode       = self.get_model_mode()
+            if   model_mode == "model_multi":
                 ins.model       = None
                 ins.model_multi = copy.deepcopy(self.model_multi)
                 ins.calibrater  = None
-            ins.is_calib     = self.is_calib
-            if ins.is_calib:
+            elif model_mode == "calibrater":
                 ins.model       = None
                 ins.model_multi = None
                 ins.calibrater  = copy.deepcopy(self.calibrater)
@@ -386,44 +427,57 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self, is_calib: bool=False, is_calib_cv: bool=False, list_cv: list[int]=None, is_normalize: bool=False, is_binary_fit: bool=False):
+    def set_cvmodel(self, is_calib: bool=False, is_calib_after_cv: bool=False, list_cv: list[int]=None, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=None):
         self.logger.info("START")
         assert isinstance(is_calib, bool)
-        assert isinstance(is_calib_cv, bool)
-        assert not (is_calib == False and is_calib_cv == True)
+        assert isinstance(is_calib_after_cv, bool)
+        assert isinstance(is_normalize, bool)
+        assert isinstance(is_binary_fit, bool)
+        assert not (is_calib == False and is_calib_after_cv == True)
         assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
-        assert list_cv is None or check_type_list(list_cv, int)
+        assert list_cv is None or (check_type_list(list_cv, int) and sum([str(x) in self.list_cv for x in list_cv]) == len(list_cv))
+        assert n_bins is None or isinstance(n_bins, int)
+        if not (is_calib == True and is_calib_after_cv == True): assert n_bins is None
         if list_cv is None: list_cv = self.list_cv
         else:               list_cv = np.array(self.list_cv)[list_cv].tolist()
         if is_calib:
             assert self.is_calib == False
-            if is_calib_cv:
+            if is_calib_after_cv:
+                self.logger.info("calibrate after cv models.")
                 self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
                 valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{i}") for i in list_cv], axis=0, ignore_index=True)
                 input_x  = valid_df.loc[:, valid_df.columns.str.contains("^predict_proba_", regex=True)].values
                 input_y  = valid_df["answer"].values.astype(int)
+                if n_bins is None: n_bins=50
                 self.calibration(
                     df=None, input_x=input_x, input_y=input_y, model=self.model_multi, model_func=self.model_func,
-                    is_use_valid=False, is_predict=False, is_normalize=is_normalize, is_binary_fit=is_binary_fit, n_bins=50
+                    is_use_valid=False, is_predict=False, is_normalize=is_normalize, is_binary_fit=is_binary_fit, n_bins=n_bins
                 )
                 self.model_multi = self.calibrater
             else:
+                self.logger.info("calibrate each cv models.")
+                if is_binary_fit: self.logger.warning(f"This parameter is not valid for this mode. is_binary_fit: {is_binary_fit}")
                 for i in list_cv:
                     if not hasattr(self, f"model_cv{i}_calib"):
                         logger.raise_error(f"Please run 'calibration_cv_model' first.")
                 self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in list_cv], func_predict=self.model_func)
         else:
+            self.logger.info("cv models without calibration.")
             self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
-    def get_model(self):
+    def get_model_mode(self):
         if self.is_cvmodel:
             model_mode = "model_multi"
         elif self.is_calib:
             model_mode = "calibrater"
         else:
             model_mode = "model"
+        return model_mode
+
+    def get_model(self):
+        model_mode = self.get_model_mode()
         self.logger.info(f"model mode: {model_mode}")
         return getattr(self, model_mode)
 
@@ -489,12 +543,12 @@ class MLManager:
             n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
             n_cv: int=None, indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
             params_fit: str | dict="{}", params_fit_evaldict: dict={},
-            is_proc_fit_every_cv: bool=True, is_save_model: bool=False
+            is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False
         ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         assert isinstance(is_proc_fit_every_cv, bool)
-        assert isinstance(is_save_model, bool)
+        assert isinstance(is_save_cv_models, bool)
         if n_split is None:
             assert indexes_train is not None and check_type_list(indexes_train, np.ndarray)
             assert indexes_valid is not None and check_type_list(indexes_valid, np.ndarray)
@@ -564,7 +618,7 @@ class MLManager:
             self.logger.info(f"cross validation : {i_cv} / {n_cv} end  ...")
             setattr(self, f"eval_valid_df_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_df)
             setattr(self, f"eval_valid_se_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_se)
-            if is_save_model:
+            if is_save_cv_models:
                 if hasattr(self.model, "copy"):
                     setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", self.model.copy())
                 else:
@@ -600,6 +654,7 @@ class MLManager:
         if model_func is None: model_func = self.model_func
         if is_use_valid:
             assert is_predict == False
+            assert df is None and input_x is None and input_y is None
             assert hasattr(self, "eval_valid_df") and isinstance(self.eval_valid_df, pd.DataFrame) and self.eval_valid_df.shape[0] > 0
             input_x = self.eval_valid_df.loc[:, self.eval_valid_df.columns.str.contains("^predict_proba_", regex=True)].values
             input_y = self.eval_valid_df["answer"].values.astype(int)
@@ -619,11 +674,11 @@ class MLManager:
         assert isinstance(input_x, np.ndarray)
         assert isinstance(input_y, np.ndarray)
         assert input_x.shape[0] == input_y.shape[0]
-        self.calibrater = Calibrater(model, model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
+        self.calibrater = Calibrater(model, model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
         self.logger.info("calibration start...")
         self.calibrater.fit(input_x, input_y, n_bins=n_bins)
         self.logger.info("calibration end...")
-        self.is_calib   = True
+        self.is_calib = True
         self.logger.info("END")
     
     def calibration_cv_model(self, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10):
@@ -657,7 +712,7 @@ class MLManager:
             self.eval_test_df = df_eval.copy()
             self.eval_test_df["index"] = test_index
         self.logger.info("END")
-        return df_eval, se_eval
+        return se_eval, df_eval
     
     def set_n_jobs(self, n_jobs: int):
         self.n_jobs          = n_jobs
@@ -708,43 +763,13 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
     return manager
 
 
-class MultiModel:
-    def __init__(self, models: list[object], func_predict: str):
-        assert isinstance(models, list) and len(models) > 0
-        assert isinstance(func_predict, str)
-        self.classes_ = models[0].classes_ if hasattr(models[0], "classes_") else None
-        for model in models:
-            assert hasattr(model, func_predict)
-            if self.classes_ is not None:
-                assert np.all(self.classes_ == model.classes_)
-        self.models       = models
-        self.func_predict = func_predict
-        setattr(self, self.func_predict, partial(self.predict_common, funcname=self.func_predict))
-    def predict_common(self, input: np.ndarray, weight: list[float]=None, funcname: str="predict", **kwargs):
-        logger.info(f"START {self.__class__}")
-        logger.info(f"func predict name: {funcname}")
-        assert isinstance(input, np.ndarray)
-        if weight is None: weight = [1.0] * len(self.models)
-        assert check_type_list(weight, float)
-        assert isinstance(funcname, str)
-        output = None
-        for i, model in enumerate(self.models):
-            logger.info(f"predict model {i}, model: {model}")
-            _output = getattr(model, funcname)(input, **kwargs) * weight[i]
-            if output is None: output  = _output
-            else:              output += _output
-        output = output / sum(weight)
-        logger.info("END")
-        return output
-
-
 class ChainModel:
     def __init__(self, output_string: str, is_normalize: bool=False):
         assert isinstance(output_string, str)
         assert isinstance(is_normalize, bool)
         self.output_string  = output_string
-        self.list_mlmanager = []
         self.is_normalize   = is_normalize
+        self.list_mlmanager: list[MLManager] = []
 
     def add(self, mlmanager: MLManager, name: str, input_string: str=None):
         """
@@ -776,7 +801,7 @@ class ChainModel:
         else:
             assert isinstance(input_x, np.ndarray)
         dict_output = {"ndf": input_x, "np": np, "pd": pd}
-        for i, dictwk in enumerate(self.list_mlmanager):
+        for _, dictwk in enumerate(self.list_mlmanager):
             mlmanager: MLManager = dictwk["mlmanager"]
             model_name           = dictwk["name"]
             input_string         = dictwk["input_string"]

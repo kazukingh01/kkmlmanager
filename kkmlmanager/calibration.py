@@ -1,40 +1,66 @@
+import json
 import numpy as np
 from functools import partial
-from sklearn.base import BaseEstimator
-from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.calibration import calibration_curve, label_binarize
+from sklearn.isotonic import IsotonicRegression
 import matplotlib.pyplot as plt
+
 # local package
+from kkmlmanager.models import BaseModel
 from kkmlmanager.util.logger import set_logger
 logger = set_logger(__name__)
 
 
 __all__ = [
-    "MockCalibrater",
     "Calibrater",
     "calibration_curve_plot",
 ]
 
 
-class MockCalibrater(BaseEstimator):
-    def __init__(self, *args, classes: np.ndarray=None, **kwargs):
-        assert isinstance(classes, np.ndarray)
-        super().__init__(*args, **kwargs)
-        self.classes_ = classes
+class MultiLabelIsotonicRegression:
+    def __init__(self):
+        logger.info("START")
+        self.basemodel = partial(IsotonicRegression, out_of_bounds="clip")
+        self.list_models: list[IsotonicRegression] = []
+        logger.info("END")
+    
     def __str__(self):
-        return __class__.__name__
-    def fit(self, *args, **kwargs):
-        return self
-    def predict(self, *args, X=None, **kwargs):
-        return X
-    def predict_proba(self, *args, X=None, **kwargs):
-        """
-        In scikit-learn, calibrater has api which is like "pred_method(X=X)".
-        So "X" is important api name.
-        """
-        return X
+        return f"{self.__class__.__name__}(basemodel={self.basemodel}, list_models={len(self.list_models)})"
+    
+    def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, **kwargs):
+        logger.info("START")
+        assert isinstance(input_x, np.ndarray) and len(input_x.shape) in [1,2]
+        assert isinstance(input_y, np.ndarray) and len(input_y.shape) in [1,2]
+        is_reg = True if input_y.dtype in [np.float16, np.float32, np.float64, np.float128, float] else False
+        if is_reg == False:
+            """
+            >>> label_binarize(['yes', 'no', 'no', 'yes'], classes=['no', 'yes'])
+            array( [[1],
+                    [0],
+                    [0],
+                    [1]])
+            """
+            input_y = label_binarize(input_y, classes=np.sort(np.unique(input_y)))
+        if len(input_x.shape) == 1: input_x = input_x.reshape(-1, 1)
+        if len(input_y.shape) == 1: input_y = input_y.reshape(-1, 1)
+        assert input_x.shape == input_y.shape
+        for _input_x, _input_y in zip(input_x.T, input_y.T):
+            self.list_models.append(self.basemodel())
+            self.list_models[-1].fit(_input_x, _input_y, *args, **kwargs)
+        logger.info("END")
+    
+    def predict(self, input_x: np.ndarray, *args, **kwargs):
+        logger.info("START")
+        assert isinstance(input_x, np.ndarray) and len(input_x.shape) in [1,2]
+        if len(input_x.shape) == 1: input_x = input_x.reshape(-1, 1)
+        list_pred = []
+        for _input_x, model in zip(input_x.T, self.list_models):
+            list_pred.append(model.predict(_input_x, *args, **kwargs))
+        logger.info("END")
+        return np.stack(list_pred).T
 
 
-class Calibrater:
+class Calibrater(BaseModel):
     def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False, is_binary_fit: bool=False):
         logger.info("START")
         assert isinstance(func_predict, str)
@@ -42,18 +68,32 @@ class Calibrater:
         assert isinstance(is_normalize, bool)
         assert isinstance(is_reg, bool)
         assert isinstance(is_binary_fit, bool)
+        if is_reg:
+            assert is_binary_fit == False
+            assert is_normalize  == False
         logger.info(f"model: {model}, func_predict: {func_predict}, is_normalize: {is_normalize}, is_reg: {is_reg}")
         self.model         = model
-        self.mock          = None
-        self.calibrater    = None
+        self.calibrater    = MultiLabelIsotonicRegression()
         self.func_predict  = func_predict
         self.is_normalize  = is_normalize
         self.is_reg        = is_reg
         self.is_binary_fit = is_binary_fit
-        setattr(
-            self, func_predict, partial(self.predict_common, is_mock=False)
-        )
+        super().__init__(func_predict, is_mock=False)
         logger.info("END")
+    
+    def to_json(self) -> dict:
+        return {
+            "func_predict": self.func_predict,
+            "is_normalize": self.is_normalize,
+            "is_reg": self.is_reg,
+            "is_binary_fit": self.is_binary_fit,
+            "model": self.model.__class__.__name__,
+            f"{self.func_predict}": str(getattr(self, self.func_predict)),
+            "calibrater": str(self.calibrater)
+        }
+
+    def __str__(self):
+        return self.__class__.__name__ + " " + json.dumps(self.to_json(), indent=4)
 
     def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, n_bins: int=10, **kwargs):
         """
@@ -75,13 +115,11 @@ class Calibrater:
             input_x = input_x.reshape(-1, 1)
             input_x = np.concatenate([1 - input_x, input_x], axis=-1)
             self.classes_ = np.array([0, 1])
-        self.mock       = MockCalibrater(classes=self.classes_)
-        self.calibrater = CalibratedClassifierCV(self.mock, cv="prefit", method='isotonic')
         self.calibrater.fit(input_x, input_y, *args, **kwargs)
-        output          = self.predict_common(input_x, is_mock=True)
+        output = self.predict_common(input_x, is_mock=True)
         if len(output.shape) == 1:
-            output      = np.stack([1 - output, output]).T
-        self.calib_fig  = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
+            output     = np.stack([1 - output, output]).T
+        self.calib_fig = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         logger.info("END")
         
     def predict_common(self, input_x, *args, is_mock: bool=False, **kwargs):
@@ -91,7 +129,7 @@ class Calibrater:
             If is_mock == True,  "input_x" must be probabilities.
         """
         logger.info(f"START {self.__class__}")
-        logger.info(f"is_mock: {is_mock}, model predict: {self.func_predict}, is_normalize: {self.is_normalize}, is_binary_fit: {self.is_binary_fit}")
+        logger.info(f"is_mock: {is_mock}, model predict function: '{self.func_predict}', is_normalize: {self.is_normalize}, is_binary_fit: {self.is_binary_fit}")
         is_binary = False
         if is_mock:
             output = input_x
@@ -102,14 +140,13 @@ class Calibrater:
                 # Calibration require the shape has more than 2 even if output's shape has only 1 because of being trained by binary.
                 output    = np.stack([1 - output, output]).T
                 is_binary = True
-        funcname = "predict" if self.is_reg else "predict_proba"
         classes  = output.shape[-1]
         if self.is_binary_fit:
             logger.info("binary fitting mode.")
             output = output.reshape(-1, 1)
             output = np.concatenate([1 - output, output], axis=-1)
         logger.info("calibrate output ...")
-        output = getattr(self.calibrater, funcname)(output)
+        output = self.calibrater.predict(output)
         if self.is_binary_fit:
             output = output[:, -1]
             output = output.reshape(-1, classes)
