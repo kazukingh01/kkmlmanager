@@ -1,4 +1,4 @@
-import sys, pickle, os, copy, datetime
+import sys, pickle, os, copy, datetime, json
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -744,6 +744,8 @@ class MLManager:
                     pickle.dump(self, f, protocol=4)
             with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
                 f.write(self.logger.internal_stream.getvalue())
+            with open(dirpath + filename + ".json", mode='w', encoding=encoding) as f:
+                json.dump(self.to_json(), f, indent=4)
         self.logger.info("END")
 
 def load_manager(filepath: str, n_jobs: int) -> MLManager:
