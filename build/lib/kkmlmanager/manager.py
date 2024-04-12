@@ -1,4 +1,4 @@
-import sys, pickle, os, copy
+import sys, pickle, os, copy, datetime
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
@@ -730,17 +730,17 @@ class MLManager:
         assert isinstance(is_only_log, bool)
         dirpath = correct_dirpath(dirpath)
         makedirs(dirpath, exist_ok=exist_ok, remake=remake)
-        if filename is None: filename = f"mlmanager_{id(self)}.pickle"
+        if filename is None: filename = f"mlmanager.{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.{id(self)}"
         self.logger.info(f"save file: {dirpath + filename}.")
         if is_minimum:
             if is_only_log == False:
-                with open(dirpath + filename + ".min", mode='wb') as f:
+                with open(dirpath + filename + ".min.pickle", mode='wb') as f:
                     pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=4)
             with open(dirpath + filename + ".min.log", mode='w', encoding=encoding) as f:
                 f.write(self.logger.internal_stream.getvalue())
         else:
             if is_only_log == False:
-                with open(dirpath + filename, mode='wb') as f:
+                with open(dirpath + filename + ".pickle", mode='wb') as f:
                     pickle.dump(self, f, protocol=4)
             with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
                 f.write(self.logger.internal_stream.getvalue())
@@ -755,9 +755,9 @@ def load_manager(filepath: str, n_jobs: int) -> MLManager:
     manager.__class__ = MLManager
     manager.logger = set_logger(manager.logger.name, internal_log=True)
     manager.set_n_jobs(n_jobs)
-    if os.path.exists(f"{filepath}.log"):
-        logger.info(f"load log file: {filepath}.log")
-        with open(f"{filepath}.log", mode='r') as f:
+    if os.path.exists(filepath.replace('.pickle', '.log')):
+        logger.info(f"load log file: {filepath.replace('.pickle', '.log')}")
+        with open(filepath.replace('.pickle', '.log'), mode='r') as f:
             manager.logger.internal_stream.write(f.read())
     manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
     logger.info("END")
