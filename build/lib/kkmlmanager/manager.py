@@ -301,7 +301,7 @@ class MLManager:
         assert type(df_train) == type(df_test)
         assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
         assert thre_count is not None and (isinstance(thre_count, str) or isinstance(thre_count, int))
-        if isinstance(thre_count, str): assert thre_count in ["maen"]
+        if isinstance(thre_count, str): assert thre_count in ["mean"]
         if isinstance(thre_count, int): assert thre_count >= 0
         if df_train is not None:
             df_adv, df_pred, se_eval = get_features_by_adversarial_validation(
