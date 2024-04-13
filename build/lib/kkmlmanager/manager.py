@@ -292,7 +292,7 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: int | float=None, 
+        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: int | float=None, thre_count: int | str="mean",
         n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, **kwargs
     ):
         self.logger.info("START")
@@ -300,6 +300,9 @@ class MLManager:
         assert df_test  is None or isinstance(df_test,  pd.DataFrame)
         assert type(df_train) == type(df_test)
         assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
+        assert thre_count is not None and (isinstance(thre_count, str) or isinstance(thre_count, int))
+        if isinstance(thre_count, str): assert thre_count in ["maen"]
+        if isinstance(thre_count, int): assert thre_count >= 0
         if df_train is not None:
             df_adv, df_pred, se_eval = get_features_by_adversarial_validation(
                 df_train, df_test, self.columns.tolist(), columns_ans=None, 
@@ -310,12 +313,16 @@ class MLManager:
             self.eval_adversarial_se  = se_eval.copy()
             self.eval_adversarial_df  = df_pred.copy()
         else:
-            try: df_adv = getattr(self, "features_adversarial")
+            try: df_adv = getattr(self, "features_adversarial").copy()
             except AttributeError:
                 self.logger.warning(f"features_adversarial is not found. Run '{sys._getframe().f_code.co_name}' first.")
                 self.logger.info("END")
                 return None
         if cutoff is not None:
+            if thre_count == "mean":
+                df_adv = df_adv.loc[df_adv["count"] >= int(df_adv["count"].mean())]
+            else:
+                df_adv = df_adv.loc[df_adv["count"] >= thre_count]
             columns_del = df_adv.index[df_adv["ratio"] >= cutoff]
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
             for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_adv.loc[x, 'ratio']}")
@@ -329,7 +336,7 @@ class MLManager:
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False, batch_size=128)",
             "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True,  batch_size=128)",
             "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000, dtype=np.float32, batch_size=25)",
-            "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, n_split=3, n_cv=2, dtype=np.float32, batch_size=25)",
+            "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype=np.float32, batch_size=25)",
             "self.cut_features_by_correlation(df, cutoff=0.99, dtype='float16', is_gpu=True, corr_type='pearson',  batch_size=2000, min_n=100)",
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='spearman', batch_size=500,  min_n=100)",
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
