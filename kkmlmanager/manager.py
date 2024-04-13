@@ -443,17 +443,19 @@ class MLManager:
         assert isinstance(is_binary_fit, bool)
         assert not (is_calib == False and is_calib_after_cv == True)
         assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
-        assert list_cv is None or (check_type_list(list_cv, int) and sum([str(x) in self.list_cv for x in list_cv]) == len(list_cv))
+        assert list_cv is None or check_type_list(list_cv, int)
+        if list_cv is not None and len(self.list_cv) > 0:
+            list_cv = [str(x).zfill(len(self.list_cv[0])) for x in list_cv]
+            assert sum([x in self.list_cv for x in list_cv]) == len(list_cv)
         assert n_bins is None or isinstance(n_bins, int)
         if not (is_calib == True and is_calib_after_cv == True): assert n_bins is None
         if list_cv is None: list_cv = self.list_cv
-        else:               list_cv = np.array(self.list_cv)[list_cv].tolist()
         if is_calib:
             assert self.is_calib == False
             if is_calib_after_cv:
                 self.logger.info("calibrate after cv models.")
-                self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
-                valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{i}") for i in list_cv], axis=0, ignore_index=True)
+                self.model_multi = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
+                valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in list_cv], axis=0, ignore_index=True)
                 input_x  = valid_df.loc[:, valid_df.columns.str.contains("^predict_proba_", regex=True)].values
                 input_y  = valid_df["answer"].values.astype(int)
                 if n_bins is None: n_bins=50
@@ -465,13 +467,13 @@ class MLManager:
             else:
                 self.logger.info("calibrate each cv models.")
                 if is_binary_fit: self.logger.warning(f"This parameter is not valid for this mode. is_binary_fit: {is_binary_fit}")
-                for i in list_cv:
-                    if not hasattr(self, f"model_cv{i}_calib"):
+                for x in list_cv:
+                    if not hasattr(self, f"model_cv{x}_calib"):
                         logger.raise_error(f"Please run 'calibration_cv_model' first.")
-                self.model_multi = MultiModel([getattr(self, f"model_cv{i}_calib") for i in list_cv], func_predict=self.model_func)
+                self.model_multi = MultiModel([getattr(self, f"model_cv{x}_calib") for x in list_cv], func_predict=self.model_func)
         else:
             self.logger.info("cv models without calibration.")
-            self.model_multi = MultiModel([getattr(self, f"model_cv{i}") for i in list_cv], func_predict=self.model_func)
+            self.model_multi = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
         self.logger.info("END")
     
