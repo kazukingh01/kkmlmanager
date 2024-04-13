@@ -493,7 +493,8 @@ class MLManager:
 
     def fit(
         self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
-        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False
+        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False,
+        colname_sample_weight: str=None
     ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
@@ -504,6 +505,7 @@ class MLManager:
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
         assert isinstance(is_eval_train, bool)
+        assert colname_sample_weight is None or (isinstance(colname_sample_weight, str) and (df_train.columns.isin(colname_sample_weight).sum() == 1)
         # pre proc
         if is_proc_fit:
             train_x, train_y, train_index = self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
@@ -516,8 +518,9 @@ class MLManager:
         # fit
         if isinstance(params_fit, str):
             assert isinstance(params_fit_evaldict, dict)
+            sample_weight = np.ones(train_x.shape[0]).astype(float) if colname_sample_weight is None else df_train.loc[train_index, colname_sample_weight].values.copy().astype(float)
             params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
-            params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
+            params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
             params_fit = eval(params_fit, {}, params_fit_evaldict)
         self.logger.info(f"model: {self.model}, is_reg: {self.is_reg}, fit params: {params_fit}")
         self.logger.info("fitting: start ...")
@@ -555,7 +558,7 @@ class MLManager:
             n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
             n_cv: int=None, indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
             params_fit: str | dict="{}", params_fit_evaldict: dict={},
-            is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False
+            is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, colname_sample_weight: str=None
         ):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
@@ -625,7 +628,7 @@ class MLManager:
             self.fit(
                 df_train=df_train.iloc[index_train, :], df_valid=df_train.iloc[index_valid, :],
                 is_proc_fit=is_proc_fit_every_cv, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
-                is_eval_train=False
+                is_eval_train=False, colname_sample_weight=colname_sample_weight
             )
             self.logger.info(f"cross validation : {i_cv} / {n_cv} end  ...")
             setattr(self, f"eval_valid_df_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_df)
