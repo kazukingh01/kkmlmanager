@@ -546,6 +546,8 @@ class MLManager:
                 self.eval_train_df[f"otr_{x}"] = df_train.loc[train_index, x].copy().values
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
+        else:
+            self.eval_train_se = pd.Series({"n_data": train_x.shape[0]}, dtype=object)
         self.logger.info("END")
 
     def fit_cross_validation(

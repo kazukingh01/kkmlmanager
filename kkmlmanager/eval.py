@@ -74,6 +74,7 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
     else:
         df = predict_model(model, input_x, is_reg=is_reg, func_predict=func_predict, **kwargs)
     se = pd.Series(dtype=object)
+    se["n_data"] = df.shape[0]
     if is_reg:
         assert len(input_y.shape) == 1
         df["answer"] = input_y
