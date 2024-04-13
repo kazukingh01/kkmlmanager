@@ -505,7 +505,7 @@ class MLManager:
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
         assert isinstance(is_eval_train, bool)
-        assert colname_sample_weight is None or (isinstance(colname_sample_weight, str) and (df_train.columns.isin(colname_sample_weight).sum() == 1)
+        assert colname_sample_weight is None or (isinstance(colname_sample_weight, str) and (df_train.columns.isin(colname_sample_weight).sum() == 1))
         # pre proc
         if is_proc_fit:
             train_x, train_y, train_index = self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
