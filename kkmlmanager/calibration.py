@@ -111,7 +111,7 @@ class Calibrater(BaseModel):
         'input_x' must be probabilities, not Features.
         """
         logger.info("START")
-        assert isinstance(input_x, np.ndarray) and ((len(input_x.shape) == 2 and input_x.shape[-1] >= 2) or (len(input_x.shape) == 1))
+        assert isinstance(input_x, np.ndarray) and (len(input_x.shape) == 2 and input_x.shape[-1] >= 1)
         assert isinstance(input_y, np.ndarray) and len(input_y.shape) == 1
         assert isinstance(n_bins, int) and n_bins >= 5
         if self.is_reg:
