@@ -39,6 +39,17 @@ class MultiLabelIsotonicRegression:
                     [0],
                     [0],
                     [1]])
+            >>> input_y = np.array([0,1,1])
+            >>> label_binarize(input_y, classes=np.sort(np.unique(input_y)))
+            array( [[0],
+                    [1],
+                    [1]])
+            >>> input_y = np.array([0,1,1,2])
+            >>> label_binarize(input_y, classes=np.sort(np.unique(input_y)))
+            array( [[1, 0, 0],
+                    [0, 1, 0],
+                    [0, 1, 0],
+                    [0, 0, 1]])
             """
             input_y = label_binarize(input_y, classes=np.sort(np.unique(input_y)))
         if len(input_x.shape) == 1: input_x = input_x.reshape(-1, 1)
