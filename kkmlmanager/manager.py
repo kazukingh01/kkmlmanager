@@ -709,6 +709,8 @@ class MLManager:
             df         = getattr(self, f"eval_valid_df_cv{x}").copy()
             input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
             input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)
+            if input_x.shape[-1] == 2 and np.all(np.sort(np.unique(input_y)) == np.array([0, 1])):
+                input_x = input_x[:, -1] # If it's binary classification.
             calibrater.fit(input_x, input_y, n_bins=n_bins)
             setattr(self, f"model_cv{x}_calib", calibrater)
         self.logger.info("END")
