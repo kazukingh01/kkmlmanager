@@ -689,6 +689,8 @@ class MLManager:
         assert isinstance(input_x, np.ndarray)
         assert isinstance(input_y, np.ndarray)
         assert input_x.shape[0] == input_y.shape[0]
+        if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
+            input_x = input_x[:, -1:] # If it's binary classification.
         self.calibrater = Calibrater(model, model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
         self.logger.info("calibration start...")
         self.calibrater.fit(input_x, input_y, n_bins=n_bins)
@@ -709,7 +711,7 @@ class MLManager:
             df         = getattr(self, f"eval_valid_df_cv{x}").copy()
             input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
             input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)
-            if input_x.shape[-1] == 2 and np.all(np.sort(np.unique(input_y)) == np.array([0, 1])):
+            if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
                 input_x = input_x[:, -1:] # If it's binary classification.
             calibrater.fit(input_x, input_y, n_bins=n_bins)
             setattr(self, f"model_cv{x}_calib", calibrater)

@@ -129,7 +129,7 @@ class Calibrater(BaseModel):
         self.calibrater.fit(input_x, input_y, *args, **kwargs)
         output = self.predict_common(input_x, is_mock=True)
         if len(output.shape) == 1:
-            output     = np.stack([1 - output, output]).T
+            output = np.stack([1 - output, output]).T
         self.calib_fig = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         logger.info("END")
         
@@ -160,7 +160,10 @@ class Calibrater(BaseModel):
             output = output.reshape(-1, classes)
         if self.is_normalize:
             logger.info("normalize output ...")
-            output = (output / output.sum(axis=-1).reshape(-1, 1))
+            if len(output.shape) == 2 and output.shape[-1] >= 2:
+                output = (output / output.sum(axis=-1).reshape(-1, 1))
+            else:
+                logger.warning(f"This shape ({output.shape}) is not supported for normalization.")
         if is_binary:
             # return to same shape as model's output
             output = output[:, -1]
