@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 
-def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None, prev_study_name: str=None, **kwargs):
+def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None, prev_study_name: str=None, n_jobs: int=1, **kwargs):
     """
     Params::
         storage: postgresql://postgres:postgres@127.0.0.1:5432/optuna
@@ -29,6 +29,7 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
     assert isinstance(is_new, bool)
     name = f"study_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}" if name is None else name
     assert isinstance(name, str)
+    assert isinstance(n_jobs, int) and (n_jobs > 0 or n_jobs == -1)
     study   = None
     sampler = TPESampler(n_startup_trials=100, n_ei_candidates=100, multivariate=False, constant_liar=True)
     if is_new:
@@ -47,7 +48,7 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
         logger.info(f"use CmaEsSampler with previous study: {prev_study_name}")
         study_prev    = optuna.load_study(storage=storage, study_name=prev_study_name)
         study.sampler = optuna.samplers.CmaEsSampler(source_trials=study_prev.trials)
-    study.optimize(func, n_trials=n_trials)
+    study.optimize(func, n_trials=n_trials, n_jobs=n_jobs)
     logger.info("END")
     return study
 
