@@ -2,7 +2,11 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, QuantileTransformer, OneHotEncoder
 from sklearn.decomposition import PCA
-import umap
+try:
+    # The load time of this module is vely slow, which is about 8 second. So this import module is optional.
+    import umap # pip install umap-learn==0.5.5
+except ModuleNotFoundError:
+    pass
 
 # local package
 from kkmlmanager.util.dataframe import astype_faster, query

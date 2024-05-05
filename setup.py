@@ -10,7 +10,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='kkmlmanager',
-    version='1.2.10',
+    version='1.2.11',
     description='usefule library for ML (mainly for table data).',
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -30,7 +30,6 @@ setup(
         "scikit-learn==1.3.2",
         "matplotlib==3.8.3",
         "joblib==1.3.2",
-        "umap-learn==0.5.5",
         "iterative-stratification==0.1.7",
         "setuptools>=62.0.0",
         "wheel>=0.37.0",
