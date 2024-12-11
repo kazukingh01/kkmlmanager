@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # training
     manager.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
     # cross validation
-    manager.fit_cross_validation(df_train, n_split=5, n_cv=3, is_proc_fit_every_cv=True, is_save_model=True)
+    manager.fit_cross_validation(df_train, n_split=5, n_cv=3, is_proc_fit_every_cv=True, is_save_cv_models=True)
     # calibration
     # test evaluation
     df, se = manager.evaluate(df_valid, is_store=False)

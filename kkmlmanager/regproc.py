@@ -5,7 +5,7 @@ import pandas as pd
 import kkmlmanager.procs as kkprocs
 from kkmlmanager.procs import BaseProc
 from kkmlmanager.util.com import check_type, check_type_list
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

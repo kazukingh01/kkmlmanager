@@ -4,7 +4,7 @@ import numpy as np
 
 # local package
 from kkmlmanager.util.com import check_type_list
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

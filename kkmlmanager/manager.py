@@ -12,7 +12,7 @@ from kkmlmanager.models import MultiModel
 from kkmlmanager.calibration import Calibrater
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

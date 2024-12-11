@@ -1,5 +1,5 @@
 import numpy as np
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

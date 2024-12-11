@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score, r2_score, log_loss
 
 # local package
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

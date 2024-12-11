@@ -11,7 +11,7 @@ except ModuleNotFoundError:
 # local package
 from kkmlmanager.util.dataframe import astype_faster, query
 from kkmlmanager.util.com import check_type, check_type_list
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

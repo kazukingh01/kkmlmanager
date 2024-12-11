@@ -11,7 +11,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 from kkmlmanager.regproc import RegistryProc
 from kkmlmanager.util.dataframe import parallel_apply, astype_faster
 from kkmlmanager.util.com import check_type_list
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 

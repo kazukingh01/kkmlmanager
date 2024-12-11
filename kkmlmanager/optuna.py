@@ -3,7 +3,7 @@ import optuna
 import pandas as pd
 from optuna.samplers import TPESampler
 # local package
-from kkmlmanager.util.logger import set_logger
+from kklogger import set_logger
 logger = set_logger(__name__)
 
 
