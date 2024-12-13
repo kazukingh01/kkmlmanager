@@ -657,7 +657,9 @@ class MLManager:
         else:           self.set_model(RandomForestClassifier, class_weight="balanced", **dictwk)
         # registry proc
         self.proc_registry(dict_proc={
-            "row": [],
+            "row": (
+                [] if self.is_reg else [f'"ProcCondition", "{x} >= 0"' for x in self.columns_ans]
+            ),
             "exp": [
                 '"ProcAsType", np.float32, batch_size=128', 
                 '"ProcToValues"',
