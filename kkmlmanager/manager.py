@@ -642,7 +642,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
     
-    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, n_estimators: int=1000):
+    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, n_estimators: int=100):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         assert isinstance(df_valid, pd.DataFrame) or df_valid is None
