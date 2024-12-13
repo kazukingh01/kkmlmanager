@@ -641,6 +641,48 @@ class MLManager:
             if i_cv >= n_cv: break
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
+    
+    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, n_estimators: int=1000):
+        self.logger.info("START")
+        assert isinstance(df_train, pd.DataFrame)
+        assert isinstance(df_valid, pd.DataFrame) or df_valid is None
+        assert isinstance(df_test,  pd.DataFrame) or df_test  is None
+        # set model
+        from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+        dictwk = {
+            "bootstrap": True, "n_estimators": n_estimators, "max_depth": None, "max_features":"sqrt", 
+            "verbose":3, "random_state": 0, "n_jobs": self.n_jobs
+        }
+        if self.is_reg: self.set_model(RandomForestRegressor,  **dictwk)
+        else:           self.set_model(RandomForestClassifier, class_weight="balanced", **dictwk)
+        # registry proc
+        self.proc_registry(dict_proc={
+            "row": [],
+            "exp": [
+                '"ProcAsType", np.float32, batch_size=128', 
+                '"ProcToValues"',
+                '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
+                '"ProcFillNaMinMax"',
+                '"ProcFillNa", 0',
+            ],
+            "ans": (
+                ['"ProcAsType", np.float32, n_jobs=1'] if self.is_reg else ['"ProcAsType", np.int32, n_jobs=1']
+            ) + [
+                '"ProcToValues"',
+                '"ProcReshape", (-1, )',
+            ]
+        })
+        # training
+        if df_valid is not None:
+            self.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
+        else:
+            self.fit_cross_validation(df_train, n_split=2, n_cv=2, is_proc_fit_every_cv=True, is_save_cv_models=True)
+            self.set_cvmodel()
+        # test evaluation
+        if df_test is not None:
+            self.evaluate(df_test, is_store=True)
+        self.logger.info("END")
+        
 
     def calibration(
         self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, model=None, model_func: str=None,

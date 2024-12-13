@@ -475,6 +475,7 @@ def get_features_by_correlation(
         batch = [np.arange(df.shape[1])]
     else:
         batch = np.array_split(np.arange(df.shape[1]), df.shape[1] // batch_size)
+    logger.info("convert to astype...")
     df = astype_faster(df.copy(), list_astype=[{"from": None, "to": getattr(np, dtype)}], batch_size=10, n_jobs=n_jobs)
     if corr_type == "spearman":
         df = parallel_apply(
@@ -483,6 +484,7 @@ def get_features_by_correlation(
             batch_size=10, n_jobs=n_jobs
         )
     if is_gpu:
+        logger.info(f"calculate correlation [GPU] corr_type: {corr_type}...")
         n_iter = int(((len(batch) ** 2 - len(batch)) / 2) + len(batch))
         i_iter = 0
         for i, batch_x in enumerate(batch):
@@ -500,6 +502,7 @@ def get_features_by_correlation(
                     ndf_corr = corr_coef_kendall_2array(input_x, input_y, dtype=dtype, min_n=min_n, is_gpu=is_gpu, **dictwk)
                 df_corr.iloc[batch_x, batch_y] = ndf_corr
     else:
+        logger.info(f"calculate correlation [CPU] corr_type: {corr_type}...")
         if corr_type == "pearson":
             func1    = partial(get_features_by_correlation_func1, dtype=dtype, min_n=min_n)
             list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([

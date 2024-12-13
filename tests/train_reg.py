@@ -57,3 +57,6 @@ if __name__ == "__main__":
     # calibration
     # test evaluation
     df, se = manager.evaluate(df_valid, is_store=False)
+    # test basic tree model
+    manager.fit_basic_treemodel(df_train, df_valid=None,     df_test=df_valid)
+    manager.fit_basic_treemodel(df_train, df_valid=df_valid, df_test=df_valid)
