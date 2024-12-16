@@ -25,6 +25,7 @@ __all__ = [
     "get_features_by_correlation",
     "get_features_by_randomtree_importance",
     "get_features_by_adversarial_validation",
+    "create_features_by_basic_method"
 ]
 
 
@@ -662,3 +663,36 @@ def get_features_by_adversarial_validation(
     logger.info(f"roc_auc: {se_eval['auc']}, accuracy: {se_eval['acc']}")
     logger.info("END")
     return df_adv, df_pred, se_eval
+
+def create_features_by_basic_method(
+    df: pd.DataFrame, colname_begin: str, replace_inf: float=float("nan"),
+    calc_list=["sum","mean","std","max","min","rank","diff","ratio"],
+) -> pd.DataFrame:
+    """
+    Params::
+        df: input
+        colname_begin: Column name to be added at the beginning
+        columns: 
+        calc_list: ["sum","mean","std","max","min","rank","diff","ratio"]
+    """
+    logger.info(f"START column: {colname_begin}")
+    assert isinstance(df, pd.DataFrame) and df.shape[1] >= 2
+    assert isinstance(colname_begin, str)
+    df_f = pd.DataFrame(index=df.index)
+    if "sum"  in calc_list: df_f[colname_begin + "_sum"]  = df.sum(axis=1)
+    if "mean" in calc_list: df_f[colname_begin + "_mean"] = df.mean(axis=1)
+    if "std"  in calc_list: df_f[colname_begin + "_std"]  = df.std(axis=1)
+    if "max"  in calc_list: df_f[colname_begin + "_max"]  = df.max(axis=1)
+    if "min"  in calc_list: df_f[colname_begin + "_min"]  = df.min(axis=1)
+    if "rank" in calc_list:
+        dfwk = df.rank(axis=1, method="average")
+        for x in dfwk.columns:
+            df_f[colname_begin+"_"+x+"_rank"] = dfwk[x].astype(np.float16)
+    for i, x in enumerate(df.columns):
+        for y in df.columns[i+1:]:
+            if "diff"  in calc_list: df_f[colname_begin+"_"+x+"_"+y+"_diff" ] =  df[x] - df[y]
+            if "ratio" in calc_list: df_f[colname_begin+"_"+x+"_"+y+"_ratio"] = (df[x] / df[y]).astype(np.float32)
+    if replace_inf is not None:
+        df_f = df_f.replace(float("inf"), replace_inf).replace(float("-inf"), replace_inf)
+    logger.info("END")
+    return df_f
