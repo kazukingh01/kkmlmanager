@@ -642,11 +642,15 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
     
-    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, n_estimators: int=100):
+    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, ncv: int=2, n_estimators: int=100):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         assert isinstance(df_valid, pd.DataFrame) or df_valid is None
         assert isinstance(df_test,  pd.DataFrame) or df_test  is None
+        assert isinstance(ncv,          int) and ncv >= 1
+        assert isinstance(n_estimators, int) and n_estimators >= 100
+        assert not (ncv == 1 and df_valid is None)
+        assert not (ncv >= 2 and df_valid is not None)
         # set model
         from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
         dictwk = {
@@ -675,10 +679,10 @@ class MLManager:
             ]
         })
         # training
-        if df_valid is not None:
+        if df_valid is not None and ncv == 1:
             self.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
         else:
-            self.fit_cross_validation(df_train, n_split=2, n_cv=2, is_proc_fit_every_cv=True, is_save_cv_models=True)
+            self.fit_cross_validation(df_train, n_split=ncv, n_cv=ncv, is_proc_fit_every_cv=True, is_save_cv_models=True)
             self.set_cvmodel()
         # test evaluation
         if df_test is not None:
