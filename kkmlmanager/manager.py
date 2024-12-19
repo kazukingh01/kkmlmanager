@@ -642,7 +642,7 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
     
-    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, ncv: int=2, n_estimators: int=100):
+    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, ncv: int=2, n_estimators: int=100, model_kwargs: dict={}):
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         assert isinstance(df_valid, pd.DataFrame) or df_valid is None
@@ -651,12 +651,14 @@ class MLManager:
         assert isinstance(n_estimators, int) and n_estimators >= 100
         assert not (ncv == 1 and df_valid is None)
         assert not (ncv >= 2 and df_valid is not None)
+        assert isinstance(model_kwargs, dict)
         # set model
         from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
         dictwk = {
             "bootstrap": True, "n_estimators": n_estimators, "max_depth": None, "max_features":"sqrt", 
             "verbose":3, "random_state": 0, "n_jobs": self.n_jobs
         }
+        dictwk.update(model_kwargs)
         if self.is_reg: self.set_model(RandomForestRegressor,  **dictwk)
         else:           self.set_model(RandomForestClassifier, class_weight="balanced", **dictwk)
         # registry proc
