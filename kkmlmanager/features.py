@@ -578,7 +578,7 @@ def get_features_by_randomtree_importance(
             "min_samples_split":int(np.log2(ndf_x.shape[0])), "verbose":3, "random_state":i, "n_jobs": n_jobs
         }
         for x, y in kwargs.items():
-            if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion", "class_weight"]: dictwk[x] = y        
+            if x in ["bootstrap", "n_estimators", "max_depth", "max_features", "verbose", "min_samples_split", "criterion", "class_weight"]: dictwk[x] = y
         if is_reg:
             for x in ["class_weight"]:
                 if x in dictwk: del dictwk[x]
