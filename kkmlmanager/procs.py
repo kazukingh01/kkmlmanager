@@ -12,8 +12,6 @@ except ModuleNotFoundError:
 # local package
 from kkmlmanager.util.dataframe import query
 from kkmlmanager.util.com import check_type, check_type_list
-from kklogger import set_logger
-logger = set_logger(__name__)
 
 
 __all__ = [
@@ -38,6 +36,9 @@ __all__ = [
     "ProcDigitize",
     "ProcEval",
 ]
+
+
+DTYPES_PL_NOT_NAN = [pl.String, pl.Categorical, pl.Datetime, pl.Date, pl.Boolean]
 
 
 def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | list | tuple:
@@ -104,8 +105,10 @@ class BaseProc:
                 assert self.shape_out == output.shape[1:]
         return output
     def __str__(self):
-        attrs_str = ', '.join(f'{k}={v!r}' for k, v in vars(self).items())
+        attrs_str = ', '.join(f'{k}={v!r}' for k, v in vars(self).items() if not k in ["shape_in", "shape_out"])
         return f'{self.__class__.__name__}({attrs_str})'
+    def __repr__(self):
+        return self.__str__()
     def fit_main(self):
         raise NotImplementedError()
     def call_main(self):
@@ -160,30 +163,37 @@ class ProcUMAP(ProcSKLearn):
         super().__init__(umap.UMAP, *args, **kwargs)
 
 class ProcFillNa(BaseProc):
-    def __init__(self, fill_value: str | int | float | list | np.ndarray, **kwargs):
-        assert check_type(fill_value, [str, int, float, list, np.ndarray])
+    def __init__(self, fill_value: str | int | float | list | np.ndarray | dict, **kwargs):
+        assert check_type(fill_value, [str, int, float, list, np.ndarray, dict])
         if isinstance(fill_value, str):
             assert fill_value in ["mean", "max", "min", "median"]
         super().__init__(**kwargs)
         self.fill_value = fill_value
         self.fit_values = None
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
-        if self.type_in == "pd":
-            if isinstance(self.fill_value, str):
-                self.fit_values = {x: y for x, y in getattr(input, self.fill_value)(axis=0).items()}
-        elif self.type_in == "pl":
-            if isinstance(self.fill_value, str):
+        if isinstance(self.fill_value, str):
+            if self.type_in == "pd":
+                columns = [x for x, y in input.dtypes.items() if y in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]]
+                self.fit_values = {x: y for x, y in getattr(input[columns], self.fill_value)(axis=0).items()}
+            elif self.type_in == "pl":
+                columns = [x for x, y in zip(input.columns, input.dtypes) if y in [pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64]]
+                input   = input.select(columns)
                 self.fit_values = getattr(input, self.fill_value)().to_dicts()[0]
-        else:
-            assert len(input.shape) == 2
-            if isinstance(self.fill_value, str):
+            else:
+                assert len(input.shape) == 2
+                assert input.dtype in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]
                 self.fit_values = getattr(np, f"nan{self.fill_value}")(input, axis=0)
-        if isinstance(self.fill_value, list):
-            assert check_type_list(self.fill_value, [int, float])
+        elif isinstance(self.fill_value, list):
+            for x in self.fill_value: assert x is not None
             assert len(self.fill_value) == input.shape[-1]
             self.fit_values = np.array(self.fill_value)
         elif isinstance(self.fill_value, np.ndarray):
             assert self.fill_value.shape[0] == input.shape[-1]
+            self.fit_values = self.fill_value
+        elif isinstance(self.fill_value, dict):
+            assert self.type_in in ["pd", "pl"]
+            for x in self.fill_value.keys():
+                assert x in input.columns
             self.fit_values = self.fill_value
         else:
             self.fit_values = self.fill_value
@@ -193,14 +203,23 @@ class ProcFillNa(BaseProc):
         if self.type_in == "pd":
             if isinstance(self.fit_values, np.ndarray):
                 output = output.fillna({x: y for x, y in zip(output.columns, self.fit_values)})
-            else:
-                output = output.fillna(self.fit_values) # same as dict
-        elif self.type_in == "pl":
-            if isinstance(self.fit_values, np.ndarray):
-                assert len(output.columns) == self.fit_values.shape[0]
-                output = output.with_columns([pl.col(x).fill_nan(None).fill_null(y) for x, y in zip(output.columns, self.fit_values)])
             elif isinstance(self.fit_values, dict):
-                output = output.with_columns([pl.col(x).fill_nan(None).fill_null(y) for x, y in self.fit_values.items()])
+                output = output.fillna(self.fit_values)
+            else:
+                columns = [x for x, y in input.dtypes.items() if not isinstance(y, (pd.CategoricalDtype, pd.Categorical))]
+                output  = output.fillna({x:self.fit_values for x in columns})
+        elif self.type_in == "pl":
+            dict_bool = {x: y in DTYPES_PL_NOT_NAN for x, y in zip(output.columns, output.dtypes)}
+            if isinstance(self.fit_values, np.ndarray):
+                output = output.with_columns([
+                    pl.col(x).fill_null(y) if dict_bool[x] else pl.col(x).fill_nan(None).fill_null(y)
+                    for x, y in zip(output.columns, self.fit_values) if y is not None
+                ])
+            elif isinstance(self.fit_values, dict):
+                output = output.with_columns([
+                    pl.col(x).fill_null(y) if dict_bool[x] else pl.col(x).fill_nan(None).fill_null(y)
+                    for x, y in self.fit_values.items() if y is not None
+                ])
             else:
                 output = output.fill_nan(None).fill_null(self.fit_values)
         else:
@@ -209,7 +228,7 @@ class ProcFillNa(BaseProc):
                 for i, x in enumerate(mask.T):
                     output[x, i] = self.fit_values[i]
             elif isinstance(self.fit_values, dict):
-                raise ValueError(f"type_in: {self.type_in}, fit_values: {self.fit_values} is not supported")
+                raise TypeError(f"type_in: {self.type_in}, fit_values: {self.fit_values} is not supported")
             else:
                 output = np.nan_to_num(input, nan=self.fit_values)
             pass
@@ -222,9 +241,9 @@ class ProcFillNaMinMaxRandomly(BaseProc):
         self.add_value  = add_value
         self.fit_values = None
     def fit_main(self, input: np.ndarray):
-        assert isinstance(input, np.ndarray)
         if self.type_in != "np":
-            raise ValueError(f"{self.__class__.__name__}'s input must be np.ndarray")
+            raise TypeError(f"{self.__class__.__name__}'s input must be np.ndarray")
+        assert isinstance(input, np.ndarray)
         assert len(input.shape) == 2
         assert input.dtype in [float, np.float16, np.float32, np.float64]
         fit_min = np.nanmin(input, axis=0) - float(self.add_value)
@@ -255,9 +274,12 @@ class ProcReplaceValue(BaseProc):
                     assert check_type(b, [int, str, float])
             self.is_dict_rep = True
         else:
-            for x, y in replace_value.items():
-                assert check_type(x, [int, str, float])
-                assert check_type(y, [int, str, float])
+            list_x = list(replace_value.keys())
+            list_y = list(replace_value.values())
+            assert (
+                (check_type_list(list_x, [int, float]) and check_type_list(list_y, [int, float])) or
+                (check_type_list(list_x, str)          and check_type_list(list_y, str))
+            )
         if columns is not None:
             if check_type(columns, [int, str]): columns = [columns, ]
             assert check_type_list(columns, [int, str])
@@ -326,6 +348,15 @@ class ProcReplaceInf(ProcReplaceValue):
         assert check_type(posinf, float)
         assert check_type(neginf, float)
         super().__init__(replace_value={float("inf"): posinf, float("-inf"): neginf}, **kwargs)
+    def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
+        super().fit_main(input)
+        if self.type_in == "pl":
+            self.replace_value = {x: None if isinstance(y, float) and np.isnan(y) else y for x, y in self.replace_value.items()}
+        if self.columns is None:
+            if self.type_in == "pd":
+                self.columns = [x for x, y in input.dtypes.items() if y in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]]
+            elif self.type_in == "pl":
+                self.columns = [x for x, y in zip(input.columns, input.dtypes) if y in [pl.Float32, pl.Float64]]
     def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if self.type_in == "np":
             output = np.nan_to_num(input, nan=float("nan"), posinf=self.replace_value[float("inf")], neginf=self.replace_value[float("-inf")])
@@ -337,7 +368,8 @@ class ProcToValues(BaseProc):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     def fit_main(self, input: pd.DataFrame | pl.DataFrame):
-        assert self.type_in in ["pd", "pl"]
+        if self.type_in not in ["pd", "pl"]:
+            raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
         assert check_type(input, [pd.DataFrame, pl.DataFrame])
     def call_main(self, input):
         if self.type_in == "pd":
@@ -368,9 +400,14 @@ class ProcMap(BaseProc):
             output[self.column] = output[self.column].map(self.values).fillna(self.fill_null)
         elif self.type_in == "pl":
             columns = output.columns.copy()
-            output  = output.join(pl.DataFrame([[x, y] for x, y in self.values.items()], strict=False, orient="row", schema=[self.column, "__work"]), how="left", on=self.column)
+            dfwk    = pl.DataFrame([[x, y] for x, y in self.values.items()], strict=False, orient="row", schema=[self.column, "__work"])
+            dfwk    = dfwk.with_columns(pl.col(self.column).cast(output[self.column].dtype))
+            output  = output.join(dfwk, how="left", on=self.column)
             output  = output.rename({self.column: "__tmp", "__work": self.column}).select(columns)
-            output  = output.with_columns(pl.col(self.column).fill_nan(None).fill_null(self.fill_null))
+            if output[self.column].dtype in DTYPES_PL_NOT_NAN:
+                output = output.with_columns(pl.col(self.column).fill_null(self.fill_null))
+            else:
+                output = output.with_columns(pl.col(self.column).fill_nan(None).fill_null(self.fill_null))
         else:
             ndf = output[:, self.column].copy()
             ndf = np.vectorize(lambda x: self.values.get(x))(ndf)
@@ -381,16 +418,18 @@ class ProcMap(BaseProc):
 class ProcAsType(BaseProc):
     def __init__(self, to_type: type, columns: str | list[str]=None, **kwargs):
         assert isinstance(to_type, type)
-        if isinstance(columns, str): columns = [columns, ]
-        assert columns is None or check_type_list(columns, str)
+        if isinstance(columns, (int, str)): columns = [columns, ]
+        assert columns is None or check_type_list(columns, [int, str])
         super().__init__(**kwargs)
         self.to_type = to_type
         self.columns = columns
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if   self.type_in == "pd":
+            assert self.columns is not None
             for x in self.columns: assert x in input.columns
             assert self.to_type in [int, float, str, np.int32, np.int64, np.float16, np.float32, np.float64]
         elif self.type_in == "pl":
+            assert self.columns is not None
             for x in self.columns: assert x in input.columns
             assert self.to_type in [int, float, str, pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64, pl.String]
         else:
@@ -408,8 +447,11 @@ class ProcAsType(BaseProc):
         return output
 
 class ProcReshape(BaseProc):
-    def __init__(self, reshape: tuple, **kwargs):
+    def __init__(self, *reshape: tuple, **kwargs):
+        if len(reshape) == 1 and isinstance(reshape[0], tuple):
+            reshape = reshape[0]
         assert isinstance(reshape, tuple)
+        assert check_type_list(reshape, int)
         super().__init__(**kwargs)
         self.reshape = reshape
     def fit_main(self, input: np.ndarray):
@@ -419,20 +461,30 @@ class ProcReshape(BaseProc):
         return input.reshape(*self.reshape)
 
 class ProcDropNa(BaseProc):
-    def __init__(self, columns: str | list[str], **kwargs):
-        if isinstance(columns, str): columns = [columns, ]
-        assert check_type_list(columns, str)
+    def __init__(self, columns: int | str | list[str | int], **kwargs):
+        if not isinstance(columns, list): columns = [columns, ]
+        assert check_type_list(columns, [int, str])
         super().__init__(**kwargs)
         self.columns = columns
-    def fit_main(self, input: pd.DataFrame | pl.DataFrame):
-        if not self.type_in in ["pd", "pl"]:
-            raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
-        for x in self.columns: assert x in input.columns
-    def call_main(self, input: pd.DataFrame | pl.DataFrame):
+    def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
+        if self.type_in in ["pd", "pl"]:
+            for x in self.columns: assert x in input.columns
+        else:
+            assert check_type_list(self.columns, int)
+            assert len(input.shape) == 2
+            for x in self.columns: assert x < input.shape[-1]
+    def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if self.type_in == "pd":
             output = input.dropna(subset=self.columns)
+        elif self.type_in == "pl":
+            dict_bool = {x: y in DTYPES_PL_NOT_NAN for x, y in zip(self.columns, input.select(self.columns).dtypes)}
+            output = input.filter([
+                pl.col(x).is_not_null() if dict_bool[x] else pl.col(x).fill_nan(None).is_not_null()
+                for x in self.columns
+            ])
         else:
-            output = output.filter([pl.col(x).fill_nan(None).is_not_null() for x in self.columns])
+            ndf_bool = np.isnan(input[:, self.columns].astype(float)).max(axis=-1)
+            output   = input[~ndf_bool]
         return output
 
 class ProcCondition(BaseProc):
@@ -441,9 +493,9 @@ class ProcCondition(BaseProc):
         super().__init__(**kwargs)
         self.query_string = query_string
     def fit_main(self, input: pd.DataFrame | pl.DataFrame):
-        assert check_type(input, [pd.DataFrame, pl.DataFrame])
         if not self.type_in in ["pd", "pl"]:
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
+        assert check_type(input, [pd.DataFrame, pl.DataFrame])
     def call_main(self, input: pd.DataFrame | pl.DataFrame):
         if self.type_in == "pd":
             ndf_bool = query(input, self.query_string)
@@ -454,6 +506,7 @@ class ProcCondition(BaseProc):
 
 class ProcDigitize(BaseProc):
     """
+    Not supported
     >>> np.digitize([-2,1,2,3,4], [-1,1,2])
     array([0, 2, 3, 3, 3])
     """
@@ -465,8 +518,10 @@ class ProcDigitize(BaseProc):
         self._bins = []
         self.is_percentile = is_percentile
     def fit_main(self, input: np.ndarray):
+        if self.type_in != "np":
+            raise TypeError(f"{self.__class__.__name__}'s input must be np.ndarray")
         assert isinstance(input, np.ndarray)
-        assert self.type_in == "np"
+        assert input.dtype in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]
         if self.is_percentile:
             self._bins = [np.percentile(input, x) for x in self.bins]
         else:
@@ -479,7 +534,7 @@ class ProcEval(BaseProc):
         assert isinstance(eval_string, str)
         super().__init__(**kwargs)
         self.eval_string = eval_string
-    def fit_main(self, *args, **kwargs):
+    def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         return None
-    def call_main(self, input):
-        return eval(self.eval_string, {"pd": pd, "np": np, "__input": input}, {})
+    def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
+        return eval(self.eval_string, {"pd": pd, "np": np, "pl": pl, "__input": input}, {})
