@@ -74,7 +74,7 @@ class BaseProc:
         if output is None:
             output = self(input, *args, is_check=False, **kwargs)
         self.type_out  = {pd.DataFrame: "pd", np.ndarray: "np", pl.DataFrame: "pl"}[type(output)]
-        self.shape_out = info_columns(input)
+        self.shape_out = info_columns(output)
         return output
     def __call__(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, *args, n_jobs: int=None, is_check: bool=None, **kwargs):
         if is_check is not None:
@@ -82,7 +82,7 @@ class BaseProc:
         else:
             is_check = self.is_check
         if not self.is_fit:
-            raise NotFittedError("You must use 'fit' first.")
+            raise NotFittedError("You must 'fit' first.")
         if self.is_jobs_fix == False and n_jobs is not None:
             assert isinstance(n_jobs, int) and n_jobs >= -1
             self.n_jobs = n_jobs
@@ -105,7 +105,10 @@ class BaseProc:
                 assert self.shape_out == output.shape[1:]
         return output
     def __str__(self):
-        attrs_str = ', '.join(f'{k}={v!r}' for k, v in vars(self).items() if not k in ["shape_in", "shape_out"])
+        attrs_str = ', '.join(
+            f'{k}={v!r}' for k, v in vars(self).items()
+            if not k in ["shape_in", "shape_out", "is_check", "is_fit", "type_in", "type_out"]
+        )
         return f'{self.__class__.__name__}({attrs_str})'
     def __repr__(self):
         return self.__str__()

@@ -37,11 +37,13 @@ class RegistryProc(object):
             f"shape={self.shape}), procs={[str(x) for x in self.procs]}"
         )
 
+    def __repr__(self):
+        return self.__str__()
+
     def initialize(self):
-        self.is_fit   = False
-        self.is_check = True
+        self.is_fit = False
         self.shape: pd.Index | tuple = None
-        self.check_proc(self.is_check)
+        self.check_proc(True) # Default True.
     
     def register(self, proc: str | BaseProc, *args, **kwargs):
         if isinstance(proc, str):
@@ -53,7 +55,6 @@ class RegistryProc(object):
 
     def check_proc(self, is_check: bool):
         assert isinstance(is_check, bool)
-        self.is_check = is_check
         for proc in self.procs:
             proc.is_check = is_check
     
@@ -64,16 +65,29 @@ class RegistryProc(object):
         assert check_type_list(check_inout, str)
         for x in check_inout: assert x in ["class", "row", "col"]
         self.shape = info_columns(input)
-        output     = input.copy()
+        if isinstance(input, pl.DataFrame):
+            output = input.clone()
+        else:
+            output = input.copy()
         LOGGER.info(f"input: {__class__.info_value(output)}")
         for proc in self.procs:
             LOGGER.info(f"proc: {proc} fit")
             output = proc.fit(output)
             LOGGER.info(f"output: {__class__.info_value(output)}")
         for x in check_inout:
-            if   x == "class": type(input) == type(output)
-            elif x == "row": input.shape[0]  == output.shape[0]
-            elif x == "col": input.shape[-1] == output.shape[-1]
+            if   x == "class":
+                if type(input) != type(output):
+                    raise TypeError(f"Type is different between input and output. input: {type(input)}, output: {type(output)}")
+            elif x == "row":
+                if input.shape[0] != output.shape[0]:
+                    raise TypeError(f"Shape is different between input and output. input: {input.shape}, output: {output.shape}")
+            elif x == "col":
+                if isinstance(input, (pd.DataFrame, pl.DataFrame)) and isinstance(output, (pd.DataFrame, pl.DataFrame)):
+                    if list(input.columns) != list(output.columns):
+                        raise TypeError(f"Columns is different between input and output. input: {input.shape}, output: {output.shape}")
+                else:
+                    if input.shape[-1] != output.shape[-1]:
+                        raise TypeError(f"Shape is different between input and output. input: {input.shape}, output: {output.shape}")
         self.is_fit = True
         LOGGER.info("END")
         return output
@@ -86,17 +100,15 @@ class RegistryProc(object):
         if isinstance(input, pd.DataFrame):
             if self.is_auto_colslct:
                 input = input.loc[:, self.shape]
-            if self.is_check:
-                assert input.columns.isin(self.shape).sum() == self.shape.shape[0]
         elif isinstance(input, pl.DataFrame):
             if self.is_auto_colslct:
                 input = input.select(self.shape)
-            if self.is_check:
-                assert input.columns == self.shape
         else:
-            if self.is_check:
-                assert input.shape[1:] == self.shape
-        output = input.copy()
+            assert self.is_auto_colslct == False
+        if isinstance(input, pl.DataFrame):
+            output = input.clone()
+        else:
+            output = input.copy()
         LOGGER.info(f"input: {__class__.info_value(output)}")
         if len(exec_procs) == 0: procs = self.procs
         else: procs = [self.procs[i] for i in exec_procs]
@@ -114,6 +126,6 @@ class RegistryProc(object):
         elif isinstance(value, pl.DataFrame):
             return f"pl: {value.shape}"
         elif isinstance(value, np.ndarray):
-            return f"nd: {value.shape}, dtype: {value.dtype}"
+            return f"np: {value.shape}, dtype: {value.dtype}"
         else:
             raise Exception(f"value: {type(value)} is not expected type.")

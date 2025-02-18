@@ -30,24 +30,24 @@ class MLManager:
     def __init__(
         self,
         # model parameter
-        columns_exp: list[str], columns_ans: str | list[str], columns_otr: list[str]=None, is_reg: bool=False, 
+        columns_exp: list[str], columns_ans: str | list[str], columns_oth: list[str]=None, is_reg: bool=False, 
         # common parameter
         outdir: str="./output/", random_seed: int=1, n_jobs: int=1
     ):
         self.logger = set_logger(f"{__class__.__name__}.{id(self)}", internal_log=True)
         self.logger.info("START")
         if isinstance(columns_ans, str): columns_ans = [columns_ans, ]
-        if columns_otr is None: columns_otr = []
+        if columns_oth is None: columns_oth = []
         assert check_type_list(columns_exp, str)
         assert check_type_list(columns_ans, str)
-        assert check_type_list(columns_otr, str)
+        assert check_type_list(columns_oth, str)
         assert isinstance(is_reg, bool)
         assert isinstance(outdir, str)
         assert isinstance(random_seed, int) and random_seed >= 0
         assert isinstance(n_jobs, int) and n_jobs >= 1
         self.columns_exp = np.array(columns_exp)
         self.columns_ans = np.array(columns_ans)
-        self.columns_otr = np.array(columns_otr)
+        self.columns_oth = np.array(columns_oth)
         self.is_reg      = is_reg
         self.outdir      = correct_dirpath(outdir)
         self.random_seed = random_seed
@@ -56,7 +56,7 @@ class MLManager:
         self.logger.info("END")
     
     def __str__(self):
-        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_otr}"
+        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_oth}"
 
     def initialize(self):
         self.logger.info("START")
@@ -124,7 +124,7 @@ class MLManager:
         assert isinstance(is_minimum, bool)
         if is_minimum:
             ins = __class__(
-                self.columns_exp.tolist(), self.columns_ans.tolist(), columns_otr=self.columns_otr.tolist(), 
+                self.columns_exp.tolist(), self.columns_ans.tolist(), columns_oth=self.columns_oth.tolist(), 
                 is_reg=self.is_reg, outdir=self.outdir, random_seed=self.random_seed, n_jobs=self.n_jobs
             )
             ins.logger.internal_stream.write(copy.deepcopy(self.logger.internal_stream.getvalue()))
@@ -499,7 +499,7 @@ class MLManager:
         self.logger.info("START")
         assert isinstance(df_train, pd.DataFrame)
         if df_valid is not None: assert isinstance(df_valid, pd.DataFrame)
-        for x in self.columns_otr:
+        for x in self.columns_oth:
             assert np.any(df_train.columns == x)
             if df_valid is not None: assert np.any(df_valid.columns == x)
         assert isinstance(is_proc_fit, bool)
@@ -535,7 +535,7 @@ class MLManager:
             self.eval_valid_se = se_eval.copy()
             self.eval_valid_df = df_eval.copy()
             self.eval_valid_df["index"] = valid_index
-            for x in self.columns_otr:
+            for x in self.columns_oth:
                 self.eval_valid_df[f"otr_{x}"] = df_valid.loc[valid_index, x].copy().values
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
@@ -545,7 +545,7 @@ class MLManager:
             self.eval_train_se = se_eval.copy()
             self.eval_train_df = df_eval.copy()
             self.eval_train_df["index"] = train_index
-            for x in self.columns_otr:
+            for x in self.columns_oth:
                 self.eval_train_df[f"otr_{x}"] = df_train.loc[train_index, x].copy().values
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
