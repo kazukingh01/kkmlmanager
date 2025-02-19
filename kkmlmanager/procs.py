@@ -29,6 +29,7 @@ __all__ = [
     "ProcReplaceInf",
     "ProcToValues",
     "ProcMap",
+    "ProcMapLabelAuto",
     "ProcAsType",
     "ProcReshape",
     "ProcDropNa",
@@ -69,7 +70,7 @@ class BaseProc:
         assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
         self.type_in  = {pd.DataFrame: "pd", np.ndarray: "np", pl.DataFrame: "pl"}[type(input)]
         self.shape_in = info_columns(input)
-        output        = self.fit_main(input, *args, **kwargs)
+        output        = self.fit_main(input, *args, **kwargs) # Basically, it's not retured. but some process run "fit" & "transform" at once because it's efficient
         self.is_fit   = True
         if output is None:
             output = self(input, *args, is_check=False, **kwargs)
@@ -88,11 +89,14 @@ class BaseProc:
             self.n_jobs = n_jobs
         if is_check:
             if self.type_in == "pd":
+                assert isinstance(input, pd.DataFrame)
                 assert len(self.shape_in) == len(input.columns)
                 assert np.all(self.shape_in == input.columns)
             elif self.type_in == "pl":
+                assert isinstance(input, pl.DataFrame)
                 assert self.shape_in == input.columns
             else:
+                assert isinstance(input, np.ndarray)
                 assert self.shape_in == input.shape[1:]
         output = self.call_main(input, *args, **kwargs)
         if is_check:
@@ -418,6 +422,20 @@ class ProcMap(BaseProc):
             output[:, self.column] = ndf
         return output
 
+class ProcMapLabelAuto(ProcMap):
+    def __init__(self, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
+        assert check_type(column, [int, str])
+        assert check_type(fill_null, [int, float, str])
+        super().__init__({"tmp": 0}, column, fill_null=fill_null, **kwargs)
+    def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
+        super().fit_main(input) # for checking
+        if self.type_in in ["pd", "pl"]:
+            values = np.unique(input[self.column].to_numpy())
+        else:
+            values = np.unique(input[:, self.column])
+        assert np.isnan(values).sum() == 0
+        self.values = {x: i for i, x in enumerate(np.sort(values))}
+
 class ProcAsType(BaseProc):
     def __init__(self, to_type: type, columns: str | list[str]=None, **kwargs):
         assert isinstance(to_type, type)
@@ -428,11 +446,13 @@ class ProcAsType(BaseProc):
         self.columns = columns
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if   self.type_in == "pd":
-            assert self.columns is not None
+            if self.columns is None:
+                self.columns = input.columns.tolist()
             for x in self.columns: assert x in input.columns
             assert self.to_type in [int, float, str, np.int32, np.int64, np.float16, np.float32, np.float64]
         elif self.type_in == "pl":
-            assert self.columns is not None
+            if self.columns is None:
+                self.columns = input.columns
             for x in self.columns: assert x in input.columns
             assert self.to_type in [int, float, str, pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64, pl.String]
         else:

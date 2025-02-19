@@ -1,19 +1,20 @@
 import sys, pickle, os, copy, datetime, json
 import numpy as np
 import pandas as pd
+import polars as pl
 from sklearn.model_selection import StratifiedKFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 
 # local package
 from kkmlmanager.regproc import RegistryProc
-from kkmlmanager.features import get_features_by_variance, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
+from kkmlmanager.features import get_features_by_variance_pl, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
 from kkmlmanager.eval import eval_model
 from kkmlmanager.models import MultiModel
 from kkmlmanager.calibration import Calibrater
 from kkmlmanager.util.numpy import isin_compare_string
 from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
 from kklogger import set_logger
-logger = set_logger(__name__)
+LOGGER = set_logger(__name__)
 
 
 __all__ = [
@@ -45,9 +46,9 @@ class MLManager:
         assert isinstance(outdir, str)
         assert isinstance(random_seed, int) and random_seed >= 0
         assert isinstance(n_jobs, int) and n_jobs >= 1
-        self.columns_exp = np.array(columns_exp)
-        self.columns_ans = np.array(columns_ans)
-        self.columns_oth = np.array(columns_oth)
+        self.columns_exp = np.array(columns_exp, dtype=object)
+        self.columns_ans = np.array(columns_ans, dtype=object)
+        self.columns_oth = np.array(columns_oth, dtype=object)
         self.is_reg      = is_reg
         self.outdir      = correct_dirpath(outdir)
         self.random_seed = random_seed
@@ -56,7 +57,10 @@ class MLManager:
         self.logger.info("END")
     
     def __str__(self):
-        return f"model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_oth}"
+        return f"{__class__.__name__}(model: {self.model}\ncolumns explain: {self.columns_exp}\ncolumns answer: {self.columns_ans}\ncolumns other: {self.columns_oth})"
+    
+    def __repr__(self):
+        return self.__str__()
 
     def initialize(self):
         self.logger.info("START")
@@ -184,7 +188,7 @@ class MLManager:
 
     def update_features(self, features: list[str] | np.ndarray):
         self.logger.info("START")
-        assert check_type(features, [np.ndarray, list])
+        assert isinstance(features, (np.ndarray, list))
         if isinstance(features, list):
             check_type_list(features, str)
             features = np.ndarray(features)
@@ -194,15 +198,17 @@ class MLManager:
         self.logger.info(f"columns new: {self.columns.shape}, columns before:{self.columns_hist[-1].shape}")
         self.logger.info("END")
 
-    def cut_features_by_variance(self, df: pd.DataFrame=None, cutoff: float=0.99, ignore_nan: bool=False, batch_size: int=128):
+    def cut_features_by_variance(self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.99, ignore_nan: bool=False, n_divide: int=10000):
         self.logger.info("START")
-        assert df is None or isinstance(df, pd.DataFrame)
+        assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
         assert isinstance(cutoff, float) and 0 < cutoff <= 1.0
         assert isinstance(ignore_nan, bool)
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, ignore_nan: {ignore_nan}")
         attr_name = f"features_var_{ignore_nan}_{str(cutoff)[:5].replace('.', '')}"
+        if isinstance(df, pd.DataFrame):
+            df = pl.from_dataframe(df)
         if df is not None:
-            sebool = get_features_by_variance(df[self.columns], cutoff=cutoff, ignore_nan=ignore_nan, batch_size=batch_size, n_jobs=self.n_jobs)
+            sebool = get_features_by_variance_pl(df.select(self.columns), cutoff=cutoff, ignore_nan=ignore_nan, n_divide=n_divide)
             setattr(self, attr_name, sebool.copy())
         else:
             try: sebool = getattr(self, attr_name)
@@ -210,44 +216,49 @@ class MLManager:
                 self.logger.warning(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
                 self.logger.info("END")
                 return None
-        columns = sebool.index[~sebool].values
+        columns = sebool.index[~sebool].to_numpy(dtype=object)
         if df is not None:
             columns_del = self.columns[~isin_compare_string(self.columns, columns)].copy()
+            df_del = df.select(columns_del).fill_nan(None)
             for x in columns_del:
-                sewk = df[x].value_counts().sort_values(ascending=False)
+                dfwk = df_del[x].value_counts().sort("count")
                 self.logger.info(
-                    f"feature: {x}, n nan: {df[x].isna().sum()}, max count: {(sewk.index[0], sewk.iloc[0]) if len(sewk) > 0 else float('nan')}, " + 
-                    f"value unique: {df[x].unique()[:5]}"
+                    f"feature: {x}, n nan: {df_del[x].null_count()}, max count: {(dfwk[x][-1], dfwk["count"][-1])}, " + 
+                    f"unique: {dfwk[x].to_numpy()[-5:]}"
                 )
         self.update_features(columns)
         self.logger.info("END")
 
     def cut_features_by_correlation(
-        self, df: pd.DataFrame=None, cutoff: float=0.99, sample_size: int=10000, dtype: str="float16", is_gpu: bool=False, 
+        self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.99, sample_size: int=None, dtype: str="float16", is_gpu: bool=False, 
         corr_type: str="pearson", batch_size: int=100, min_n: int=10, **kwargs
     ):
         self.logger.info("START")
-        assert df is None or isinstance(df, pd.DataFrame)
-        assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
-        if sample_size is None: sample_size = df.shape[0]
-        assert isinstance(sample_size, int) and sample_size > 0
+        assert df          is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
+        assert cutoff      is None or (isinstance(cutoff,    float) and 0 < cutoff <= 1.0)
+        assert sample_size is None or (isinstance(sample_size, int) and 0 < sample_size)
+        assert dtype     in ["float16", "float32", "float64"]
+        assert corr_type in ["pearson", "spearman"]
+        if sample_size is None:
+            sample_size = df.shape[0]
         if df is not None:
-            df = df.iloc[np.random.permutation(np.arange(df.shape[0]))[:sample_size], :].loc[:, self.columns].copy()
+            assert sample_size <= df.shape[0]
+            idx = np.random.permutation(np.arange(df.shape[0]))[:sample_size]
+            if isinstance(df, pd.DataFrame):
+                df = pl.from_dataframe(df)
+            df = df[idx][:, self.columns]
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, dtype: {dtype}, is_gpu: {is_gpu}, corr_type: {corr_type}")
         attr_name = f"features_corr_{corr_type}"
         if df is not None:
             df_corr = get_features_by_correlation(
-                df, dtype=dtype, is_gpu=is_gpu, corr_type=corr_type, 
-                batch_size=batch_size, min_n=min_n, n_jobs=self.n_jobs, **kwargs
+                df, dtype=dtype, is_gpu=is_gpu, corr_type=corr_type, batch_size=batch_size, min_n=min_n, n_jobs=self.n_jobs, **kwargs
             )
             for i in range(df_corr.shape[0]): df_corr.iloc[i:, i] = float("nan")
             setattr(self, attr_name, df_corr.copy())
         else:
             try: df_corr = getattr(self, attr_name)
             except AttributeError:
-                self.logger.warning(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.")
-                self.logger.info("END")
-                return None
+                self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.", exception=AttributeError())
         if cutoff is not None:
             columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].values
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
@@ -260,17 +271,21 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_randomtree_importance(
-        self, df: pd.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, 
-        dtype=np.float32, batch_size: int=25, **kwargs
+        self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, dtype="float32", **kwargs
     ):
         self.logger.info("START")
-        assert df is None or isinstance(df, pd.DataFrame)
+        assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
         assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
+        assert isinstance(max_iter,  int) and max_iter  > 0
+        assert isinstance(min_count, int) and min_count > 0
+        assert isinstance(dtype, str) and dtype in ["float32", "float64"]
         assert len(self.columns_ans.shape) == 1
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, max_iter: {max_iter}, min_count: {min_count}")
         if df is not None:
+            if isinstance(df, pd.DataFrame):
+                df = pl.from_dataframe(df)
             df_treeimp = get_features_by_randomtree_importance(
-                df, self.columns.tolist(), self.columns_ans[0], dtype=dtype, batch_size=batch_size, 
+                df, self.columns.tolist(), self.columns_ans[0], dtype={"float32": pl.Float32, "float64": pl.Float64}[dtype],
                 is_reg=self.is_reg, max_iter=max_iter, min_count=min_count, n_jobs=self.n_jobs, **kwargs
             )
             df_treeimp = df_treeimp.sort_values("ratio", ascending=False)
@@ -292,21 +307,27 @@ class MLManager:
         self.logger.info("END")
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame=None, df_test: pd.DataFrame=None, cutoff: int | float=None, thre_count: int | str="mean",
-        n_split: int=5, n_cv: int=5, dtype=np.float32, batch_size: int=25, **kwargs
+        self, df_train: pd.DataFrame | pl.DataFrame=None, df_test: pd.DataFrame | pl.DataFrame=None,
+        cutoff: int | float=None, thre_count: int | str="mean", n_split: int=5, n_cv: int=5, dtype: str="float32", **kwargs
     ):
         self.logger.info("START")
-        assert df_train is None or isinstance(df_train, pd.DataFrame)
-        assert df_test  is None or isinstance(df_test,  pd.DataFrame)
+        assert df_train is None or isinstance(df_train, (pd.DataFrame, pl.DataFrame))
+        assert df_test  is None or isinstance(df_test,  (pd.DataFrame, pl.DataFrame))
         assert type(df_train) == type(df_test)
         assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
         assert thre_count is not None and (isinstance(thre_count, str) or isinstance(thre_count, int))
         if isinstance(thre_count, str): assert thre_count in ["mean"]
         if isinstance(thre_count, int): assert thre_count >= 0
+        assert isinstance(n_split, int) and n_split > 0
+        assert isinstance(n_cv,    int) and n_cv    > 0
+        assert isinstance(dtype, str) and dtype in ["float32", "float64"]
         if df_train is not None:
+            if isinstance(df_train, pd.DataFrame):
+                df_train = pl.from_dataframe(df_train)
+                df_test  = pl.from_dataframe(df_test )
             df_adv, df_pred, se_eval = get_features_by_adversarial_validation(
                 df_train, df_test, self.columns.tolist(), columns_ans=None, 
-                n_split=n_split, n_cv=n_cv, dtype=dtype, batch_size=batch_size, n_jobs=self.n_jobs, **kwargs
+                n_split=n_split, n_cv=n_cv, dtype={"float32": pl.Float32, "float64": pl.Float64}[dtype], n_jobs=self.n_jobs, **kwargs
             )
             df_adv = df_adv.sort_values("ratio", ascending=False)
             self.features_adversarial = df_adv.copy()
@@ -347,22 +368,43 @@ class MLManager:
             eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test, "np": np, "pd": pd})
         self.logger.info("END")
     
-    def proc_registry(
-        self, dict_proc: dict={
-            "row": [],
-            "exp": [
-                '"ProcAsType", np.float32, batch_size=25', 
-                '"ProcToValues"', 
-                '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
-            ],
-            "ans": [
-                '"ProcAsType", np.int32',
-                '"ProcToValues"',
-                '"ProcReshape", (-1, )',
-            ]
-        }
-    ):
+    def proc_registry(self, dict_proc: dict=None):
         self.logger.info("START")
+        if dict_proc is None:
+            if self.is_reg:
+                dict_proc = {
+                    "row": [
+                        '"ProcDropNa", self.columns_ans[0]',
+                    ],
+                    "exp": [
+                        '"ProcAsType", pl.Float32', 
+                        '"ProcToValues"', 
+                        '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
+                    ],
+                    "ans": [
+                        '"ProcAsType", pl.Float32',
+                        '"ProcToValues"',
+                        '"ProcReshape", (-1, )',
+                    ]
+                }
+            else:
+                dict_proc = {
+                    "row": [
+                        '"ProcDropNa", self.columns_ans[0]',
+                    ],
+                    "exp": [
+                        '"ProcAsType", pl.Float32', 
+                        '"ProcToValues"', 
+                        '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
+                    ],
+                    "ans": [
+                        '"ProcAsType", pl.Int32',
+                        '"ProcMapLabelAuto", self.columns_ans[0]',
+                        '"ProcToValues"',
+                        '"ProcReshape", (-1, )',
+                        '"ProcAsType", np.int32',
+                    ]
+                }
         assert isinstance(dict_proc, dict)
         for x, y in dict_proc.items():
             assert x in ["row", "exp", "ans"]
@@ -373,61 +415,68 @@ class MLManager:
         for _type in ["row", "exp", "ans"]:
             if _type in dict_proc:
                 for x in dict_proc[_type]:
-                    eval(f"self.proc_{_type}.register({x})", {}, {"self": self, "np": np, "pd": pd})
+                    eval(f"self.proc_{_type}.register({x})", {}, {"self": self, "np": np, "pd": pd, "pl": pl})
         self.proc_check_init()
         self.logger.info("END")
     
-    def proc_fit(self, df: pd.DataFrame, is_row: bool=True, is_exp: bool=True, is_ans: bool=True):
+    def proc_fit(self, df: pd.DataFrame | pl.DataFrame, is_row: bool=True, is_exp: bool=True, is_ans: bool=True):
         self.logger.info("START")
+        assert isinstance(df, (pd.DataFrame, pl.DataFrame))
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
-        self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
-        self.logger.info("proc fit: row")
-        df = self.proc_row.fit(df, check_inout=["class"]) if is_row else df
+        self.logger.info(f"proc fit row: {is_row}")
+        if is_row:
+            df, indexes = self.proc_row.fit(df, check_inout=["class"], is_return_index=True)
+        else:
+            indexes = df.index.copy() if isinstance(df, pd.DataFrame) else np.arange(df.shape[0], dtype=int)
         self.logger.info(f"df shape: {df.shape}")
-        if is_exp == False and is_ans == False: return df
-        self.logger.info("proc fit: exp")
-        output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"]) if is_exp else None
+        if is_exp == False and is_ans == False:
+            return df, None, indexes
+        self.logger.info(f"proc fit: exp: {is_exp}")
+        output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"], is_return_index=False) if is_exp else None
         self.logger.info(f"output_x shape: {output_x.shape if output_x is not None else None}")
-        self.logger.info("proc fit: ans")
-        output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"]) if is_ans else None
+        self.logger.info(f"proc fit: ans: {is_ans}")
+        output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"], is_return_index=False) if is_ans else None
         self.logger.info(f"output_y shape: {output_y.shape if output_y is not None else None}")
         self.logger.info("END")
-        return output_x, output_y, df.index
+        return output_x, output_y, indexes
     
     def proc_call(self, df: pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False):
         self.logger.info("START")
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
-        self.logger.info(f"row: {is_row}. exp: {is_exp}. ans: {is_ans}.")
+        self.logger.info(f"proc call row: {is_row}")
         if is_row:
-            df = self.proc_row(df)
-            self.logger.info(f"df shape: {df.shape}")
-        if is_exp == False and is_ans == False: return df
-        output_x = self.proc_exp(df) if is_exp else None
+            df, indexes = self.proc_row.fit(df, is_return_index=True)
+        else:
+            indexes = df.index.copy() if isinstance(df, pd.DataFrame) else np.arange(df.shape[0], dtype=int)
+        self.logger.info(f"df shape: {df.shape}")
+        if is_exp == False and is_ans == False:
+            return df, None, indexes
+        self.logger.info(f"proc call exp: {is_exp}")
+        output_x = self.proc_exp(df, is_return_index=False) if is_exp else None
         self.logger.info(f"output_x shape: {output_x.shape if output_x is not None else None}")
-        output_y = self.proc_ans(df) if is_ans else None
+        self.logger.info(f"proc call ans: {is_ans}")
+        output_y = self.proc_ans(df, is_return_index=False) if is_ans else None
         self.logger.info(f"output_y shape: {output_y.shape if output_y is not None else None}")
         self.logger.info("END")
-        return output_x, output_y, df.index
+        return output_x, output_y, indexes
 
     def proc_check_init(self):
         self.logger.info("START")
-        self.proc_row.check_proc(False)
-        self.proc_exp.check_proc(False)
-        self.proc_exp.is_check = True
-        self.proc_ans.check_proc(False)
-        self.proc_ans.is_check = True
+        self.proc_row.check_proc(True)
+        self.proc_exp.check_proc(True)
+        self.proc_ans.check_proc(True)
         self.logger.info("END")
     
-    def predict(self, df: pd.DataFrame=None, input_x: np.ndarray=None, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
+    def predict(self, df: pd.DataFrame | pl.DataFrame=None, input_x: np.ndarray=None, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs):
         self.logger.info("START")
         self.logger.info(f"kwargs: {kwargs}")
         assert is_exp
         if input_x is None:
-            assert isinstance(df, pd.DataFrame)
+            assert isinstance(df, (pd.DataFrame, pl.DataFrame))
             input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         else:
             input_y, input_index = None, None
@@ -469,7 +518,7 @@ class MLManager:
                 if is_binary_fit: self.logger.warning(f"This parameter is not valid for this mode. is_binary_fit: {is_binary_fit}")
                 for x in list_cv:
                     if not hasattr(self, f"model_cv{x}_calib"):
-                        logger.raise_error(f"Please run 'calibration_cv_model' first.")
+                        self.logger.raise_error(f"Please run 'calibration_cv_model' first.")
                 self.model_multi = MultiModel([getattr(self, f"model_cv{x}_calib") for x in list_cv], func_predict=self.model_func)
         else:
             self.logger.info("cv models without calibration.")
@@ -492,20 +541,30 @@ class MLManager:
         return getattr(self, model_mode)
 
     def fit(
-        self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, is_proc_fit: bool=True, 
-        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False,
-        colname_sample_weight: str=None
+        self, df_train: pd.DataFrame | pl.DataFrame, df_valid: pd.DataFrame | pl.DataFrame=None, is_proc_fit: bool=True, 
+        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False, colname_sample_weight: str=None
     ):
+        """
+        params_fit:
+            This is used like ...
+            >>> model.fit(train_x, train_y, **params_fit)'
+        params_fit_evaldict:
+            This is used like ...
+            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
+            >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
+        """
         self.logger.info("START")
-        assert isinstance(df_train, pd.DataFrame)
-        if df_valid is not None: assert isinstance(df_valid, pd.DataFrame)
+        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
+        if df_valid is not None: assert isinstance(df_valid, (pd.DataFrame, pl.DataFrame))
         for x in self.columns_oth:
-            assert np.any(df_train.columns == x)
-            if df_valid is not None: assert np.any(df_valid.columns == x)
+            assert np.any(np.array(df_train.columns, dtype=object) == x)
+            if df_valid is not None: assert np.any(np.array(df_valid.columns, dtype=object) == x)
         assert isinstance(is_proc_fit, bool)
         assert check_type(params_fit, [str, dict])
         assert isinstance(is_eval_train, bool)
-        assert colname_sample_weight is None or (isinstance(colname_sample_weight, str) and (df_train.columns.isin([colname_sample_weight]).sum() == 1))
+        if colname_sample_weight is not None:
+            assert isinstance(colname_sample_weight, str)
+            assert colname_sample_weight in df_train.columns
         # pre proc
         if is_proc_fit:
             train_x, train_y, train_index = self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
@@ -518,7 +577,12 @@ class MLManager:
         # fit
         if isinstance(params_fit, str):
             assert isinstance(params_fit_evaldict, dict)
-            sample_weight = np.ones(train_x.shape[0]).astype(float) if colname_sample_weight is None else df_train.loc[train_index, colname_sample_weight].values.copy().astype(float)
+            sample_weight = np.ones(train_x.shape[0], dtype=float)
+            if colname_sample_weight is not None:
+                if isinstance(df_train, pl.DataFrame):
+                    sample_weight = df_train[train_index, colname_sample_weight].to_numpy()
+                else:
+                    sample_weight = df_train.loc[train_index, colname_sample_weight].to_numpy(dtype=float).copy()
             params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
             params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
             params_fit = eval(params_fit, {}, params_fit_evaldict)
@@ -536,7 +600,11 @@ class MLManager:
             self.eval_valid_df = df_eval.copy()
             self.eval_valid_df["index"] = valid_index
             for x in self.columns_oth:
-                self.eval_valid_df[f"otr_{x}"] = df_valid.loc[valid_index, x].copy().values
+                if isinstance(df_valid, pl.DataFrame):
+                    ndf = df_valid[valid_index, x].to_numpy()
+                else:
+                    ndf = df_valid.loc[valid_index, x].to_numpy()
+                self.eval_valid_df[f"oth_{x}"] = ndf
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         if is_eval_train:
@@ -546,7 +614,11 @@ class MLManager:
             self.eval_train_df = df_eval.copy()
             self.eval_train_df["index"] = train_index
             for x in self.columns_oth:
-                self.eval_train_df[f"otr_{x}"] = df_train.loc[train_index, x].copy().values
+                if isinstance(df_train, pl.DataFrame):
+                    ndf = df_train[train_index, x].to_numpy()
+                else:
+                    ndf = df_train.loc[train_index, x].to_numpy()
+                self.eval_train_df[f"oth_{x}"] = ndf
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
         else:
@@ -554,14 +626,32 @@ class MLManager:
         self.logger.info("END")
 
     def fit_cross_validation(
-            self, df_train: pd.DataFrame,
-            n_split: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
-            n_cv: int=None, indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
-            params_fit: str | dict="{}", params_fit_evaldict: dict={},
-            is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, colname_sample_weight: str=None
-        ):
+        self, df_train: pd.DataFrame | pl.DataFrame,
+        n_split: int=None, n_cv: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
+        indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
+        params_fit: str | dict="{}", params_fit_evaldict: dict={},
+        is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, colname_sample_weight: str=None
+    ):
+        """
+        n_split:
+            The number of splits for the data
+        n_cv:
+            The number of cross_validation
+        mask_split:
+            This is for mask from split, it means thah masked data must be used in all validations
+        cols_multilabel_split:
+            Basically, answer column is used for splting
+            if you want to split by multi columns, use this option
+        params_fit:
+            This is used like ...
+            >>> model.fit(train_x, train_y, **params_fit)'
+        params_fit_evaldict:
+            This is used like ...
+            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
+            >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
+        """
         self.logger.info("START")
-        assert isinstance(df_train, pd.DataFrame)
+        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
         assert isinstance(is_proc_fit_every_cv, bool)
         assert isinstance(is_save_cv_models, bool)
         if n_split is None:
@@ -574,22 +664,28 @@ class MLManager:
             assert isinstance(n_cv,    int) and n_cv    >= 1 and n_cv <= n_split
             assert indexes_train is None
             assert indexes_valid is None
+        if mask_split is not None:
+            assert isinstance(mask_split, np.ndarray)
+            assert len(mask_split.shape) == 1
+            assert df_train.shape[0] == mask_split.shape[0]
+            assert mask_split.dtype in [bool, np.bool_]
+        if cols_multilabel_split is not None:
+            assert check_type_list(cols_multilabel_split, str)
         is_fit, ndf_oth = False, None
-        index_df = df_train.index.copy()
+        index_org = df_train.index.to_numpy() if isinstance(df_train, pd.DataFrame) else np.arange(df_train.shape[0], dtype=int)
+        df_train, _, _indexes = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
+        if isinstance(df_train, pd.DataFrame):
+            ndf_bool = index_org.isin(_indexes)
+        else:
+            ndf_bool = np.isin(index_org, _indexes)
         if cols_multilabel_split is not None:
-            ndf_oth = df_train[cols_multilabel_split].copy().values
-        df_train = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
-        ndf_bool = index_df.isin(df_train.index)
-        if cols_multilabel_split is not None:
-            ndf_oth = ndf_oth[ndf_bool]
+            ndf_oth = df_train[cols_multilabel_split].to_numpy()
         if mask_split is not None:
             mask_split = mask_split[ndf_bool]
         if not is_proc_fit_every_cv:
             self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
             is_fit = True
         if n_split is not None:
-            assert cols_multilabel_split is None or check_type_list(cols_multilabel_split, str)
-            assert (mask_split is None) or (isinstance(mask_split, np.ndarray) and len(mask_split.shape) == 1 and df_train.shape[0] == mask_split.shape[0] and mask_split.dtype in [bool, np.bool_])
             indexes_train, indexes_valid = [], []
             if is_fit: _, ndf_y, _ = self.proc_call(df_train, is_row=False, is_exp=False, is_ans=True)
             else:      _, ndf_y, _ = self.proc_fit( df_train, is_row=False, is_exp=False, is_ans=True)
@@ -626,7 +722,8 @@ class MLManager:
             self.logger.info(f"cross validation : {i_cv} / {n_cv} start...")
             self.reset_model()
             self.fit(
-                df_train=df_train.iloc[index_train, :], df_valid=df_train.iloc[index_valid, :],
+                df_train=df_train.iloc[index_train, :] if isinstance(df_train, pd.DataFrame) else df_train[index_train],
+                df_valid=df_train.iloc[index_valid, :] if isinstance(df_train, pd.DataFrame) else df_train[index_valid],
                 is_proc_fit=is_proc_fit_every_cv, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
                 is_eval_train=False, colname_sample_weight=colname_sample_weight
             )
@@ -642,11 +739,14 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END")
     
-    def fit_basic_treemodel(self, df_train: pd.DataFrame, df_valid: pd.DataFrame=None, df_test: pd.DataFrame=None, ncv: int=2, n_estimators: int=100, model_kwargs: dict={}):
+    def fit_basic_treemodel(
+        self, df_train: pd.DataFrame | pl.DataFrame, df_valid: pd.DataFrame | pl.DataFrame=None, df_test: pd.DataFrame | pl.DataFrame=None,
+        ncv: int=2, n_estimators: int=100, model_kwargs: dict={}
+    ):
         self.logger.info("START")
-        assert isinstance(df_train, pd.DataFrame)
-        assert isinstance(df_valid, pd.DataFrame) or df_valid is None
-        assert isinstance(df_test,  pd.DataFrame) or df_test  is None
+        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df_valid, (pd.DataFrame, pl.DataFrame)) or df_valid is None
+        assert isinstance(df_test,  (pd.DataFrame, pl.DataFrame)) or df_test  is None
         assert isinstance(ncv,          int) and ncv >= 1
         assert isinstance(n_estimators, int) and n_estimators >= 100
         assert not (ncv == 1 and df_valid is None)
@@ -662,24 +762,9 @@ class MLManager:
         if self.is_reg: self.set_model(RandomForestRegressor,  **dictwk)
         else:           self.set_model(RandomForestClassifier, class_weight="balanced", **dictwk)
         # registry proc
-        self.proc_registry(dict_proc={
-            "row": (
-                [] if self.is_reg else [f'"ProcCondition", "{x} >= 0"' for x in self.columns_ans]
-            ),
-            "exp": [
-                '"ProcAsType", np.float32, batch_size=128', 
-                '"ProcToValues"',
-                '"ProcReplaceInf", posinf=float("nan"), neginf=float("nan")', 
-                '"ProcFillNaMinMax"',
-                '"ProcFillNa", 0',
-            ],
-            "ans": (
-                ['"ProcAsType", np.float32, n_jobs=1'] if self.is_reg else ['"ProcAsType", np.int32, n_jobs=1']
-            ) + [
-                '"ProcToValues"',
-                '"ProcReshape", (-1, )',
-            ]
-        })
+        self.proc_registry()
+        self.proc_exp.register("ProcFillNaMinMaxRandomly")
+        self.proc_exp.register("ProcFillNa", 0)
         # training
         if df_valid is not None and ncv == 1:
             self.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
@@ -690,7 +775,6 @@ class MLManager:
         if df_test is not None:
             self.evaluate(df_test, is_store=True)
         self.logger.info("END")
-        
 
     def calibration(
         self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, model=None, model_func: str=None,
@@ -767,12 +851,25 @@ class MLManager:
             setattr(self, f"model_cv{x}_calib", calibrater)
         self.logger.info("END")
 
-    def evaluate(self, df_test: pd.DataFrame, columns_ans: str=None, is_store: bool=False, **kwargs):
+    def evaluate(self, df_test: pd.DataFrame | pl.DataFrame, columns_ans: str | np.ndarray=None, is_store: bool=False, **kwargs):
         self.logger.info("START")
+        assert isinstance(df_test, (pd.DataFrame, pl.DataFrame))
+        if columns_ans is not None:
+            assert isinstance(columns_ans, (str, np.ndarray))
+            if isinstance(columns_ans, str):
+                assert columns_ans in df_test.columns
+            else:
+                assert columns_ans.shape[0] == df_test.shape[0]
         assert isinstance(is_store, bool)
-        if columns_ans is not None: assert isinstance(columns_ans, str)
-        test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=(True if columns_ans is None else False))
-        if columns_ans is not None: test_y = df_test.loc[test_index, columns_ans].values.copy()
+        if isinstance(columns_ans, np.ndarray):
+            test_y = columns_ans.copy()
+        elif isinstance(columns_ans, str):
+            test_y = df_test[columns_ans].to_numpy()
+        if columns_ans is None:
+            test_x, test_y, test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=True)
+        else:
+            test_x, _,      test_index = self.proc_call(df_test, is_row=True, is_exp=True, is_ans=False)
+            test_y = test_y[test_index]
         se_eval, df_eval = eval_model(test_x, test_y, model=self.get_model(), is_reg=self.is_reg, func_predict=self.model_func, **kwargs)
         for x in se_eval.index:
             self.logger.info(f"{x}: {se_eval.loc[x]}")
@@ -817,20 +914,20 @@ class MLManager:
         self.logger.info("END")
 
 def load_manager(filepath: str, n_jobs: int) -> MLManager:
-    logger.info("START")
+    LOGGER.info("START")
     assert isinstance(n_jobs, int)
-    logger.info(f"load file: {filepath}")
+    LOGGER.info(f"load file: {filepath}")
     with open(filepath, mode='rb') as f:
         manager = pickle.load(f)
     manager.__class__ = MLManager
     manager.logger = set_logger(manager.logger.name, internal_log=True)
     manager.set_n_jobs(n_jobs)
     if os.path.exists(filepath.replace('.pickle', '.log')):
-        logger.info(f"load log file: {filepath.replace('.pickle', '.log')}")
+        LOGGER.info(f"load log file: {filepath.replace('.pickle', '.log')}")
         with open(filepath.replace('.pickle', '.log'), mode='r') as f:
             manager.logger.internal_stream.write(f.read())
     manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
-    logger.info("END")
+    LOGGER.info("END")
     return manager
 
 
@@ -856,16 +953,16 @@ class ChainModel:
         Usage::
             add("./test.mlmanager.pickle", "test", "ndf")
         """
-        logger.info("START")
+        LOGGER.info("START")
         assert isinstance(mlmanager, MLManager)
         assert isinstance(name, str)
         assert input_string is None or isinstance(input_string, str)
-        logger.info(f"add name: {name}, input_string: {input_string}")
+        LOGGER.info(f"add name: {name}, input_string: {input_string}")
         self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
-        logger.info("END")
+        LOGGER.info("END")
 
     def predict(self, input_x: np.ndarray | pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
-        logger.info(f"START {self.__class__}")
+        LOGGER.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
         if isinstance(input_x, pd.DataFrame):
             input_x, _, _ = self.list_mlmanager[0].proc_call(input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
@@ -876,7 +973,7 @@ class ChainModel:
             mlmanager: MLManager = dictwk["mlmanager"]
             model_name           = dictwk["name"]
             input_string         = dictwk["input_string"]
-            logger.info(f"model: {model_name} predict.")
+            LOGGER.info(f"model: {model_name} predict.")
             if input_string is None:
                 output, _, _ = mlmanager.predict(df=input_x, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             else:
@@ -887,12 +984,12 @@ class ChainModel:
         try:
             output = eval(self.output_string, {}, dict_output)
         except Exception as e:
-            logger.info(f"{dict_output}")
-            logger.raise_error(f"{e}")
+            LOGGER.info(f"{dict_output}")
+            LOGGER.raise_error(f"{e}")
         if is_normalize is None: is_normalize = self.is_normalize
         if is_normalize:
-            logger.info("normalize output...")
+            LOGGER.info("normalize output...")
             assert len(output.shape) == 2
             output = output / output.sum(axis=-1).reshape(-1, 1)
-        logger.info("END")
+        LOGGER.info("END")
         return output

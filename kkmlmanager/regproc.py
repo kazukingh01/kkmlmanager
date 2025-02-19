@@ -58,15 +58,18 @@ class RegistryProc(object):
         for proc in self.procs:
             proc.is_check = is_check
     
-    def fit(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, check_inout: list[str]=None):
+    def fit(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, check_inout: list[str]=None, is_return_index: bool=False):
         LOGGER.info("START")
         assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
         if check_inout is None: check_inout = []
         assert check_type_list(check_inout, str)
         for x in check_inout: assert x in ["class", "row", "col"]
+        assert isinstance(is_return_index, bool)
         self.shape = info_columns(input)
         if isinstance(input, pl.DataFrame):
             output = input.clone()
+            if is_return_index:
+                output = output.with_columns(pl.Series(np.arange(output.shape[0], dtype=int)).alias("__indexes"))
         else:
             output = input.copy()
         LOGGER.info(f"input: {__class__.info_value(output)}")
@@ -88,11 +91,26 @@ class RegistryProc(object):
                 else:
                     if input.shape[-1] != output.shape[-1]:
                         raise TypeError(f"Shape is different between input and output. input: {input.shape}, output: {output.shape}")
+        if is_return_index:
+            if type(input) != type(output):
+                raise TypeError(
+                    f"Type is different between input and output. input: {type(input)}, output: {type(output)}. " + 
+                    f"if is_return_index = true, input and output class must be same."
+                )
+            if isinstance(output, pl.DataFrame):
+                indexes = output["__indexes"].to_numpy()
+                assert indexes.dtype in [int, np.int32, np.int64]
+                output = output.select([x for x in output.columns if x != "__indexes"])
+            else:
+                indexes = output.index.copy()
         self.is_fit = True
         LOGGER.info("END")
-        return output
+        if is_return_index:
+            return output, indexes
+        else:
+            return output
     
-    def __call__(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, exec_procs: list[int]=[]):
+    def __call__(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, exec_procs: list[int]=[], is_return_index: bool=False):
         LOGGER.info("START")
         assert self.is_fit
         assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
@@ -107,6 +125,8 @@ class RegistryProc(object):
             assert self.is_auto_colslct == False
         if isinstance(input, pl.DataFrame):
             output = input.clone()
+            if is_return_index:
+                output = output.with_columns(pl.Series(np.arange(output.shape[0], dtype=int)).alias("__indexes"))
         else:
             output = input.copy()
         LOGGER.info(f"input: {__class__.info_value(output)}")
@@ -116,8 +136,23 @@ class RegistryProc(object):
             LOGGER.info(f"proc: {proc}")
             output = proc(output, n_jobs=self.n_jobs)
             LOGGER.info(f"output: {__class__.info_value(output)}")
+        if is_return_index:
+            if type(input) != type(output):
+                raise TypeError(
+                    f"Type is different between input and output. input: {type(input)}, output: {type(output)}. " + 
+                    f"if is_return_index = true, input and output class must be same."
+                )
+            if isinstance(output, pl.DataFrame):
+                indexes = output["__indexes"].to_numpy()
+                assert indexes.dtype in [int, np.int32, np.int64]
+                output = output.select([x for x in output.columns if x != "__indexes"])
+            else:
+                indexes = output.index.copy()
         LOGGER.info("END")
-        return output
+        if is_return_index:
+            return output, indexes
+        else:
+            return output
 
     @classmethod
     def info_value(cls, value: pd.DataFrame | np.ndarray | pl.DataFrame):
