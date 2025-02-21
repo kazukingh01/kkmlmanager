@@ -29,12 +29,14 @@ class RegistryProc(object):
         self.procs: list[BaseProc] = []
         self.n_jobs                = n_jobs
         self.is_auto_colslct       = is_auto_colslct
+        self.is_fit                = False
+        self.shape: list[str | int] | tuple = None
         self.initialize()
-    
+
     def __str__(self):
         return (
             f"{__class__.__name__}(n_jobs={self.n_jobs}, is_auto_colslct={self.is_auto_colslct}, is_fit={self.is_fit}, " + 
-            f"shape={self.shape}), procs={[str(x) for x in self.procs]}"
+            f"shape={self.shape[:5]}...), procs={[str(x) for x in self.procs]}"
         )
 
     def __repr__(self):
@@ -42,7 +44,7 @@ class RegistryProc(object):
 
     def initialize(self):
         self.is_fit = False
-        self.shape: pd.Index | tuple = None
+        self.shape: list[str | int] | tuple = None
         self.check_proc(True) # Default True.
     
     def register(self, proc: str | BaseProc, *args, **kwargs):
@@ -164,3 +166,20 @@ class RegistryProc(object):
             return f"np: {value.shape}, dtype: {value.dtype}"
         else:
             raise Exception(f"value: {type(value)} is not expected type.")
+
+    def to_dict(self) -> dict:
+        return {
+            "procs": [x.to_dict() for x in self.procs],
+            "n_jobs": self.n_jobs,
+            "is_auto_colslct": self.is_auto_colslct,
+            "is_fit": self.is_fit,
+            "shape": self.shape,
+        }
+
+    @classmethod
+    def from_dict(cls, dict_regproc: dict):
+        ins        = cls(n_jobs=dict_regproc["n_jobs"], is_auto_colslct=dict_regproc["is_auto_colslct"])
+        ins.procs  = [BaseProc.from_dict(x) for x in dict_regproc["procs"]]
+        ins.is_fit = dict_regproc["is_fit"]
+        ins.shape  = dict_regproc["shape"]
+        return ins

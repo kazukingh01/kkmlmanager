@@ -46,12 +46,112 @@ def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | 
     assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
     if isinstance(input, pd.DataFrame):
         assert input.columns.dtype == object
-        shape: pd.Index = input.columns.copy()
+        shape: list = input.columns.tolist().copy()
     elif isinstance(input, pl.DataFrame):
         shape: list = input.columns.copy()
     else:
         shape: tuple = input.shape[1:]
     return shape
+
+def mask_values_for_json(value: int | float | list | dict):
+    if isinstance(value, list):
+        return [mask_values_for_json(x) for x in value]
+    elif isinstance(value, dict):
+        return {mask_values_for_json(x): mask_values_for_json(y) for x, y in value.items()}    
+    elif isinstance(value, float):
+        if np.isnan(value):
+            return "__nan__"
+        elif value == float("inf"):
+            return "__inf__"
+        elif value == float("-inf"):
+            return "__ninf__"
+    elif isinstance(value, type):
+        if value == int:
+            return "__int__"
+        elif value == float:
+            return "__float__"
+        elif value == str:
+            return "__str__"
+        elif value == bool:
+            return "__bool__"
+        elif value == np.int8:
+            return "__int8__"
+        elif value == np.int16:
+            return "__int16__"
+        elif value == np.int32:
+            return "__int32__"
+        elif value == np.int64:
+            return "__int64__"
+        elif value == np.float16:
+            return "__float16__"
+        elif value == np.float32:
+            return "__float32__"
+        elif value == np.float64:
+            return "__float64__"
+        elif value == pl.Int8:
+            return "__Int8__"
+        elif value == pl.Int16:
+            return "__Int16__"
+        elif value == pl.Int32:
+            return "__Int32__"
+        elif value == pl.Int64:
+            return "__Int64__"
+        elif value == pl.Float32:
+            return "__Float32__"
+        elif value == pl.Float64:
+            return "__Float64__"
+    return value
+
+def unmask_values_for_json(value: int | float | list | dict):
+    if isinstance(value, list):
+        return [unmask_values_for_json(x) for x in value]
+    elif isinstance(value, dict):
+        return {unmask_values_for_json(x): unmask_values_for_json(y) for x, y in value.items()}
+    elif value == "__nan__":
+        return float("nan")
+    elif value == "__inf__":
+        return float("inf")
+    elif value == "__ninf__":
+        return float("-inf")
+    elif value == "__int__":
+        return int
+    elif value == "__float__":
+        return float
+    elif value == "__str__":
+        return str
+    elif value == "__bool__":
+        return bool
+    elif value == "__int8__":
+        return np.int8
+    elif value == "__int16__":
+        return np.int16
+    elif value == "__int32__":
+        return np.int32
+    elif value == "__int64__":
+        return np.int64
+    elif value == "__float16__":
+        return np.float16
+    elif value == "__float32__":
+        return np.float32
+    elif value == "__float64__":
+        return np.float64
+    elif value == "__Int8__":
+        return pl.Int8
+    elif value == "__Int16__":
+        return pl.Int16
+    elif value == "__Int32__":
+        return pl.Int32
+    elif value == "__Int64__":
+        return pl.Int64
+    elif value == "__Float32__":
+        return pl.Float32
+    elif value == "__Float64__":
+        return pl.Float64
+    return value
+
+def set_attributes(ins, dict_proc: dict, exclude: list[str]=[]):
+    for x, y in {a: b for a, b in dict_proc.items() if a not in exclude}.items():
+        setattr(ins, x, unmask_values_for_json(y))
 
 class NotFittedError(Exception):
     pass
@@ -64,6 +164,8 @@ class BaseProc:
         self.is_fit      = False
         self.type_in     = None
         self.type_out    = None
+        self.shape_in    = None
+        self.shape_out   = None
         self.n_jobs      = n_jobs
         self.is_jobs_fix = is_jobs_fix
     def fit(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, *args, **kwargs):
@@ -91,7 +193,7 @@ class BaseProc:
             if self.type_in == "pd":
                 assert isinstance(input, pd.DataFrame)
                 assert len(self.shape_in) == len(input.columns)
-                assert np.all(self.shape_in == input.columns)
+                assert self.shape_in == input.columns.tolist()
             elif self.type_in == "pl":
                 assert isinstance(input, pl.DataFrame)
                 assert self.shape_in == input.columns
@@ -102,7 +204,7 @@ class BaseProc:
         if is_check:
             if self.type_out == "pd":
                 assert len(self.shape_out) == len(output.columns)
-                assert np.all(self.shape_out == output.columns)
+                assert self.shape_out == output.columns.tolist()
             elif self.type_out == "pl":
                 assert self.shape_out == output.columns
             else:
@@ -120,6 +222,24 @@ class BaseProc:
         raise NotImplementedError()
     def call_main(self):
         raise NotImplementedError()
+    def to_dict(self) -> dict:
+        return {
+            "__class__":   self.__class__.__name__,
+            "is_check":    self.is_check,
+            "is_fit":      self.is_fit,
+            "type_in":     self.type_in,
+            "type_out":    self.type_out,
+            "shape_in":    self.shape_in,
+            "shape_out":   self.shape_out,
+            "n_jobs":      self.n_jobs,
+            "is_jobs_fix": self.is_jobs_fix,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        assert "__class__" in dict_proc
+        _cls: BaseProc = globals()[dict_proc["__class__"]]
+        assert _cls != __class__
+        return _cls.from_dict(dict_proc)
 
 class ProcSKLearn(BaseProc):
     def __init__(self, class_proc, *args, **kwargs):
@@ -135,6 +255,11 @@ class ProcSKLearn(BaseProc):
         if isinstance(input, pl.DataFrame):
             input = input.to_pandas()
         return self.proc.transform(input)
+    def to_dict(self) -> dict:
+        raise NotImplementedError()
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        raise NotImplementedError()
 
 class ProcMinMaxScaler(ProcSKLearn):
     def __init__(self, *args, **kwargs):
@@ -170,8 +295,8 @@ class ProcUMAP(ProcSKLearn):
         super().__init__(umap.UMAP, *args, **kwargs)
 
 class ProcFillNa(BaseProc):
-    def __init__(self, fill_value: str | int | float | list | np.ndarray | dict, **kwargs):
-        assert check_type(fill_value, [str, int, float, list, np.ndarray, dict])
+    def __init__(self, fill_value: str | int | float | list | dict, **kwargs):
+        assert check_type(fill_value, [str, int, float, list, dict])
         if isinstance(fill_value, str):
             assert fill_value in ["mean", "max", "min", "median"]
         super().__init__(**kwargs)
@@ -189,14 +314,11 @@ class ProcFillNa(BaseProc):
             else:
                 assert len(input.shape) == 2
                 assert input.dtype in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]
-                self.fit_values = getattr(np, f"nan{self.fill_value}")(input, axis=0)
+                self.fit_values = [x for x in getattr(np, f"nan{self.fill_value}")(input, axis=0)]
         elif isinstance(self.fill_value, list):
             for x in self.fill_value: assert x is not None
             assert len(self.fill_value) == input.shape[-1]
-            self.fit_values = np.array(self.fill_value)
-        elif isinstance(self.fill_value, np.ndarray):
-            assert self.fill_value.shape[0] == input.shape[-1]
-            self.fit_values = self.fill_value
+            self.fit_values = self.fill_value.copy()
         elif isinstance(self.fill_value, dict):
             assert self.type_in in ["pd", "pl"]
             for x in self.fill_value.keys():
@@ -204,20 +326,20 @@ class ProcFillNa(BaseProc):
             self.fit_values = self.fill_value
         else:
             self.fit_values = self.fill_value
-        assert check_type(self.fit_values, [int, float, np.ndarray, dict])
+        assert check_type(self.fit_values, [int, float, list, dict])
     def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         output = input # Don't use copy()
         if self.type_in == "pd":
-            if isinstance(self.fit_values, np.ndarray):
+            if isinstance(self.fit_values, list):
                 output = output.fillna({x: y for x, y in zip(output.columns, self.fit_values)})
             elif isinstance(self.fit_values, dict):
                 output = output.fillna(self.fit_values)
             else:
                 columns = [x for x, y in input.dtypes.items() if not isinstance(y, (pd.CategoricalDtype, pd.Categorical))]
-                output  = output.fillna({x:self.fit_values for x in columns})
+                output  = output.fillna({x: self.fit_values for x in columns})
         elif self.type_in == "pl":
             dict_bool = {x: y in DTYPES_PL_NOT_NAN for x, y in zip(output.columns, output.dtypes)}
-            if isinstance(self.fit_values, np.ndarray):
+            if isinstance(self.fit_values, list):
                 output = output.with_columns([
                     pl.col(x).fill_null(y) if dict_bool[x] else pl.col(x).fill_nan(None).fill_null(y)
                     for x, y in zip(output.columns, self.fit_values) if y is not None
@@ -230,7 +352,7 @@ class ProcFillNa(BaseProc):
             else:
                 output = output.fill_nan(None).fill_null(self.fit_values)
         else:
-            if isinstance(self.fit_values, np.ndarray):
+            if isinstance(self.fit_values, list):
                 mask = np.isnan(output).copy()
                 for i, x in enumerate(mask.T):
                     output[x, i] = self.fit_values[i]
@@ -240,6 +362,16 @@ class ProcFillNa(BaseProc):
                 output = np.nan_to_num(input, nan=self.fit_values)
             pass
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "fill_value": mask_values_for_json(self.fill_value),
+            "fit_values": mask_values_for_json(self.fit_values),
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["fill_value"])
+        set_attributes(ins, dict_proc, ["__class__", "fill_value"])
+        return ins
 
 class ProcFillNaMinMaxRandomly(BaseProc):
     def __init__(self, add_value: int | float=1.0, **kwargs):
@@ -255,15 +387,26 @@ class ProcFillNaMinMaxRandomly(BaseProc):
         assert input.dtype in [float, np.float16, np.float32, np.float64]
         fit_min = np.nanmin(input, axis=0) - float(self.add_value)
         fit_max = np.nanmax(input, axis=0) + float(self.add_value)
-        self.fit_values = np.stack([fit_min, fit_max]).astype(input.dtype)
+        self.fit_values = [[float(y) for y in x] for x in np.stack([fit_min, fit_max]).astype(input.dtype)]
     def call_main(self, input: np.ndarray):
         assert self.fit_values is not None
         output = input # Don't use copy()
         boolwk = np.isnan(output)
         mask_0, mask_1 = np.where(boolwk)
-        fill = self.fit_values[np.random.randint(0, 2, mask_1.shape[0]), mask_1]
+        fit_values = np.array(self.fit_values, dtype=float)
+        fill       = fit_values[np.random.randint(0, 2, mask_1.shape[0]), mask_1]
         output[boolwk] = fill
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "add_value": mask_values_for_json(self.add_value),
+            "fit_values": mask_values_for_json(self.fit_values),
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["add_value"])
+        set_attributes(ins, dict_proc, ["__class__", "add_value"])
+        return ins
 
 class ProcReplaceValue(BaseProc):
     def __init__(self, replace_value: dict, columns: int | str | list[int | str]=None, **kwargs):
@@ -349,6 +492,16 @@ class ProcReplaceValue(BaseProc):
                     for x, y in self.replace_value.items():
                         ndf[ndf == x] = y
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "replace_value": mask_values_for_json(self.replace_value),
+            "columns": self.columns,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["replace_value"], columns=dict_proc["columns"])
+        set_attributes(ins, dict_proc, ["__class__", "replace_value", "columns"])
+        return ins
 
 class ProcReplaceInf(ProcReplaceValue):
     def __init__(self, posinf: float=float("nan"), neginf: float=float("nan"), **kwargs):
@@ -370,6 +523,11 @@ class ProcReplaceInf(ProcReplaceValue):
         else:
             output = super().call_main(input)
         return output
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = super().from_dict(dict_proc)
+        ins.__class__ = cls
+        return ins
 
 class ProcToValues(BaseProc):
     def __init__(self, **kwargs):
@@ -378,12 +536,14 @@ class ProcToValues(BaseProc):
         if self.type_in not in ["pd", "pl"]:
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
         assert check_type(input, [pd.DataFrame, pl.DataFrame])
-    def call_main(self, input):
-        if self.type_in == "pd":
-            output = input.values
-        else:
-            output = input.to_numpy()
+    def call_main(self, input: pd.DataFrame | pl.DataFrame):
+        output = input.to_numpy()
         return output
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls()
+        set_attributes(ins, dict_proc, ["__class__"])
+        return ins
 
 class ProcMap(BaseProc):
     def __init__(self, values: dict, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
@@ -421,6 +581,17 @@ class ProcMap(BaseProc):
             ndf[ndf == None] = self.fill_null
             output[:, self.column] = ndf
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "values": mask_values_for_json(self.values),
+            "column": self.column,
+            "fill_null": mask_values_for_json(self.fill_null),
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["values"], dict_proc["column"], dict_proc["fill_null"])
+        set_attributes(ins, dict_proc, ["__class__", "values", "column", "fill_null"])
+        return ins
 
 class ProcMapLabelAuto(ProcMap):
     def __init__(self, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
@@ -435,7 +606,7 @@ class ProcMapLabelAuto(ProcMap):
             values = np.unique(input[:, self.column])
         assert np.isnan(values).sum() == 0
         self.values = {x: i for i, x in enumerate(np.sort(values))}
-
+    
 class ProcAsType(BaseProc):
     def __init__(self, to_type: type, columns: str | list[str]=None, **kwargs):
         assert isinstance(to_type, type)
@@ -452,7 +623,7 @@ class ProcAsType(BaseProc):
             assert self.to_type in [int, float, str, np.int32, np.int64, np.float16, np.float32, np.float64]
         elif self.type_in == "pl":
             if self.columns is None:
-                self.columns = input.columns
+                self.columns = input.columns.copy()
             for x in self.columns: assert x in input.columns
             assert self.to_type in [int, float, str, pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64, pl.String]
         else:
@@ -468,6 +639,16 @@ class ProcAsType(BaseProc):
         else:
             output = output.astype(self.to_type)
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "to_type": mask_values_for_json(self.to_type),
+            "columns": self.columns,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["to_type"], columns=dict_proc["columns"])
+        set_attributes(ins, dict_proc, ["__class__", "to_type", "columns"])
+        return ins
 
 class ProcReshape(BaseProc):
     def __init__(self, *reshape: tuple, **kwargs):
@@ -482,6 +663,15 @@ class ProcReshape(BaseProc):
             raise TypeError(f"{self.__class__.__name__}'s input must be np.ndarray")
     def call_main(self, input: np.ndarray):
         return input.reshape(*self.reshape)
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "reshape": self.reshape,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(tuple(dict_proc["reshape"]) if isinstance(dict_proc["reshape"], list) else dict_proc["reshape"])
+        set_attributes(ins, dict_proc, ["__class__", "reshape"])
+        return ins
 
 class ProcDropNa(BaseProc):
     def __init__(self, columns: int | str | list[str | int], **kwargs):
@@ -509,6 +699,15 @@ class ProcDropNa(BaseProc):
             ndf_bool = np.isnan(input[:, self.columns].astype(float)).max(axis=-1)
             output   = input[~ndf_bool]
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "columns": self.columns,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["columns"])
+        set_attributes(ins, dict_proc, ["__class__", "columns"])
+        return ins
 
 class ProcCondition(BaseProc):
     def __init__(self, query_string: str, **kwargs):
@@ -526,6 +725,15 @@ class ProcCondition(BaseProc):
         else:
             output = pl.SQLContext(test=input, eager=True).execute(f"select * from test where {self.query_string}")
         return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "query_string": self.query_string,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["query_string"])
+        set_attributes(ins, dict_proc, ["__class__", "query_string"])
+        return ins
 
 class ProcDigitize(BaseProc):
     """
@@ -546,11 +754,22 @@ class ProcDigitize(BaseProc):
         assert isinstance(input, np.ndarray)
         assert input.dtype in [int, float, np.int16, np.int32, np.int64, np.float16, np.float32, np.float64]
         if self.is_percentile:
-            self._bins = [np.percentile(input, x) for x in self.bins]
+            self._bins = [float(np.percentile(input, x)) for x in self.bins]
         else:
             self._bins = self.bins
     def call_main(self, input: np.ndarray):
         return np.digitize(input, self._bins)
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "bins":  self.bins,
+            "_bins": self._bins,
+            "is_percentile": self.is_percentile,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["bins"], dict_proc["is_percentile"])
+        set_attributes(ins, dict_proc, ["__class__", "bins", "is_percentile"])
+        return ins
 
 class ProcEval(BaseProc):
     def __init__(self, eval_string: str, **kwargs):
@@ -561,3 +780,12 @@ class ProcEval(BaseProc):
         return None
     def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         return eval(self.eval_string, {"pd": pd, "np": np, "pl": pl, "__input": input}, {})
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "eval_string": self.eval_string,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["eval_string"])
+        set_attributes(ins, dict_proc, ["__class__", "eval_string"])
+        return ins
