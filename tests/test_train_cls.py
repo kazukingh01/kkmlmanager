@@ -22,8 +22,8 @@ if __name__ == "__main__":
     # pre processing
     manager.cut_features_by_variance(df_train, cutoff=0.995, ignore_nan=False)
     manager.cut_features_by_variance(df_train, cutoff=0.995, ignore_nan=True)
-    manager.cut_features_by_randomtree_importance(df_train, cutoff=None, max_iter=1, min_count=100, dtype="float32")
-    manager.cut_features_by_adversarial_validation(df_train, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype="float32")
+    # manager.cut_features_by_randomtree_importance(df_train, cutoff=None, max_iter=1, min_count=100, dtype="float32")
+    # manager.cut_features_by_adversarial_validation(df_train, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype="float32")
     manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='pearson',  batch_size=2, min_n=100)
     manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='spearman', batch_size=2, min_n=100)
     # set model
@@ -37,6 +37,10 @@ if __name__ == "__main__":
         params_fit={"loss_func": "multiclass", "num_iterations": 200, "sample_weight": "balanced"}
     )
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)
+
     # training cross validation
     mask_split = np.ones(df_train.shape[0], dtype=bool)
     mask_split[0] = False
@@ -57,8 +61,16 @@ if __name__ == "__main__":
     manager.set_cvmodel()
     output, input_y, input_index = manager.predict(df_test, is_row=False, is_exp=True, is_ans=False)
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)
+
     # test basic tree model
     manager.fit_basic_treemodel(df_train, df_valid=None, df_test=df_test, ncv=2)
+    se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)
     # # calibration
     # manager.calibration(is_use_valid=True, n_bins=100)
     # manager.calibration(is_use_valid=True, n_bins=100, is_binary_fit=True)

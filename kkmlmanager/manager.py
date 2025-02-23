@@ -1,4 +1,4 @@
-import sys, pickle, os, copy, datetime, json
+import sys, pickle, os, copy, datetime, json, base64
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -6,13 +6,15 @@ from sklearn.model_selection import StratifiedKFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 
 # local package
-from kkmlmanager.regproc import RegistryProc
-from kkmlmanager.features import get_features_by_variance_pl, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
-from kkmlmanager.eval import eval_model
-from kkmlmanager.models import MultiModel
-from kkmlmanager.calibration import Calibrater
-from kkmlmanager.util.numpy import isin_compare_string
-from kkmlmanager.util.com import check_type, check_type_list, correct_dirpath, makedirs
+from .regproc import RegistryProc
+from .features import get_features_by_variance_pl, get_features_by_correlation, get_features_by_randomtree_importance, get_features_by_adversarial_validation
+from .eval import eval_model
+from .models import MultiModel, PICKLE_PROTOCOL
+from .calibration import Calibrater
+from .procs import mask_values_for_json, unmask_values_for_json
+from .util.numpy import isin_compare_string
+from .util.com import check_type_list, correct_dirpath, makedirs
+from kkgbdt import KkGBDT
 from kklogger import set_logger
 LOGGER = set_logger(__name__)
 
@@ -69,8 +71,9 @@ class MLManager:
         self.model_args   = None
         self.model_kwargs = None
         self.model_multi: MultiModel | Calibrater = None
+        self.model_calib: Calibrater = None
+        self.model_func   = None
         self.is_cvmodel   = False
-        self.calibrater: Calibrater = None
         self.is_fit       = False
         self.is_calib     = False
         self.list_cv      = []
@@ -88,41 +91,81 @@ class MLManager:
         self.eval_test_df:  pd.DataFrame = pd.DataFrame(dtype=object)
         self.logger.info("END")
     
-    def to_json(self, is_detail: bool=False):
-        assert isinstance(is_detail, bool)
-        return {
-            "base": {
-                "input":  self.columns.tolist() if is_detail else len(self.columns),
-                "target": self.columns_ans.tolist(),
-                "is_reg": self.is_reg,
-                "random_seed": self.random_seed,
-                "n_jobs": self.n_jobs,
-            },
-            "preproc": {
-                "proc_row": str(self.proc_row),
-                "proc_exp": str(self.proc_exp),
-                "proc_ans": str(self.proc_ans),
-            },
-            "model": {
-                "is_fit": self.is_fit,
-                "is_calib": self.is_calib,
-                "is_cvmodel": self.is_cvmodel,
-                "mode": self.get_model_mode(),
-                "cv": len(self.list_cv),
-                "model": self.model.to_json() if self.model.__class__.__name__ == "KkGBDT" else str(self.model),
-                "calibrater":  self.calibrater.to_json() if self.calibrater is not None else None,
-                "model_multi": (
-                    (self.model_multi.to_json() if self.model_multi is not None else {}) | 
-                    ({"calib": self.model_multi.models[0].to_json()} if self.model_multi is not None and isinstance(self.model_multi, MultiModel) and isinstance(self.model_multi.models[0], Calibrater) else {}) |
-                    ({"calib": self.model_multi.to_json()} if self.model_multi is not None and isinstance(self.model_multi, Calibrater) else {})
-                ),
-            },
-            "eval": {
-                "train": self.eval_train_se.to_dict(),
-                "valid": [getattr(self, f"eval_valid_se_cv{x}").to_dict() for x in self.list_cv] if len(self.list_cv) > 0 else self.eval_valid_se.to_dict(),
-                "test" : self.eval_test_se.to_dict(),
-            }
+    def to_json(self, indent: int=None):
+        dictwk = {
+            "model": self.model.to_dict() if isinstance(self.model, KkGBDT) else base64.b64encode(pickle.dumps(self.model, protocol=PICKLE_PROTOCOL)).decode('ascii'),
+            "model_class": f"__{self.model_class.__class__.__name__}__" if self.model_class in [KkGBDT] else base64.b64encode(pickle.dumps(self.model_class, protocol=PICKLE_PROTOCOL)).decode('ascii'),
+            "model_args": [mask_values_for_json(x) for x in self.model_args],
+            "model_kwargs": {k: mask_values_for_json(v) for k, v in self.model_kwargs.items()},
+            "model_multi": self.model_multi.to_dict() if self.model_multi is not None else None,
+            "model_calib": self.model_calib.to_dict() if self.model_calib is not None else None,
+            "model_func": self.model_func,
+            "is_cvmodel": self.is_cvmodel,
+            "is_fit": self.is_fit,
+            "is_calib": self.is_calib,
+            "columns_hist": [x.tolist() for x in self.columns_hist],
+            "columns": self.columns.tolist(),
+            "proc_row": self.proc_row.to_dict(),
+            "proc_exp": self.proc_exp.to_dict(),
+            "proc_ans": self.proc_ans.to_dict(),
+            "eval_train_se": self.eval_train_se.to_dict(),
+            "eval_valid_se": self.eval_valid_se.to_dict(),
+            "eval_test_se":  self.eval_test_se.to_dict(),
+            "columns_exp": self.columns_exp.tolist(),
+            "columns_ans": self.columns_ans.tolist(),
+            "columns_oth": self.columns_oth.tolist(),
+            "is_reg": self.is_reg,
+            "random_seed": self.random_seed,
+            "n_jobs": self.n_jobs,
         }
+        return json.dumps(dictwk, indent=indent)
+
+    @classmethod
+    def load_from_json(cls, json_str: str, n_jobs: int=None):
+        assert isinstance(json_str, str)
+        assert n_jobs is None or isinstance(n_jobs, int)
+        dictwk = json.loads(json_str)
+        n_jobs = dictwk["n_jobs"] if n_jobs is None else n_jobs
+        ins = cls(
+            dictwk["columns_exp"], dictwk["columns_ans"], columns_oth=dictwk["columns_oth"],
+            is_reg=dictwk["is_reg"], random_seed=dictwk["random_seed"], n_jobs=n_jobs
+        )
+        exclude_list = ["columns_exp", "columns_ans", "columns_oth", "is_reg", "random_seed", "n_jobs"]
+        for x, y in dictwk.items():
+            if x in exclude_list: continue
+            if x == "model":
+                ins.model = KkGBDT.from_dict(y) if isinstance(y, dict) else pickle.loads(base64.b64decode(y))
+            elif x == "model_class":
+                ins.model_class = KkGBDT if y == f"__{KkGBDT.__class__.__name__}__" else pickle.loads(base64.b64decode(y))
+            elif x == "model_args":
+                ins.model_args = tuple([unmask_values_for_json(y[i]) for i in range(len(y))])
+            elif x == "model_kwargs":
+                ins.model_kwargs = {k: unmask_values_for_json(v) for k, v in y.items()}
+            elif x == "model_multi":
+                ins.model_multi = MultiModel.from_dict(y) if y is not None else None
+            elif x == "model_calib":
+                ins.model_calib = Calibrater.from_dict(y) if y is not None else None
+            elif x == "proc_row":
+                ins.proc_row = RegistryProc.from_dict(y)
+            elif x == "proc_exp":
+                ins.proc_exp = RegistryProc.from_dict(y)
+            elif x == "proc_ans":
+                ins.proc_ans = RegistryProc.from_dict(y)
+            elif x == "eval_train_se":
+                ins.eval_train_se = pd.Series(y)
+            elif x == "eval_valid_se":
+                ins.eval_valid_se = pd.Series(y)
+            elif x == "eval_test_se":
+                ins.eval_test_se = pd.Series(y)
+            elif x == "columns_exp":
+                ins.columns_exp = np.array(y, dtype=object)
+            elif x == "columns_ans":
+                ins.columns_ans = np.array(y, dtype=object)
+            elif x == "columns_oth":
+                ins.columns_oth = np.array(y, dtype=object)
+            else:
+                setattr(ins, x, y)
+        return ins
 
     def copy(self, is_minimum: bool=False):
         assert isinstance(is_minimum, bool)
@@ -153,11 +196,11 @@ class MLManager:
             if   model_mode == "model_multi":
                 ins.model       = None
                 ins.model_multi = copy.deepcopy(self.model_multi)
-                ins.calibrater  = None
+                ins.model_calib = None
             elif model_mode == "calibrater":
                 ins.model       = None
                 ins.model_multi = None
-                ins.calibrater  = copy.deepcopy(self.calibrater)
+                ins.model_calib = copy.deepcopy(self.model_calib)
             return ins
         else:
             return copy.deepcopy(self)
@@ -180,8 +223,8 @@ class MLManager:
         self.logger.info("START")
         self.model       = self.model_class(*self.model_args, **self.model_kwargs)
         self.model_multi = None
+        self.model_calib = None
         self.is_cvmodel  = False
-        self.calibrater  = None
         self.is_fit      = False
         self.is_calib    = False
         self.logger.info("END")
@@ -314,7 +357,7 @@ class MLManager:
         assert df_train is None or isinstance(df_train, (pd.DataFrame, pl.DataFrame))
         assert df_test  is None or isinstance(df_test,  (pd.DataFrame, pl.DataFrame))
         assert type(df_train) == type(df_test)
-        assert cutoff is None or check_type(cutoff, [int, float]) and 0 <= cutoff
+        assert cutoff is None or isinstance(cutoff, (int, float)) and 0 <= cutoff
         assert thre_count is not None and (isinstance(thre_count, str) or isinstance(thre_count, int))
         if isinstance(thre_count, str): assert thre_count in ["mean"]
         if isinstance(thre_count, int): assert thre_count >= 0
@@ -512,7 +555,7 @@ class MLManager:
                     df=None, input_x=input_x, input_y=input_y, model=self.model_multi, model_func=self.model_func,
                     is_use_valid=False, is_predict=False, is_normalize=is_normalize, is_binary_fit=is_binary_fit, n_bins=n_bins
                 )
-                self.model_multi = self.calibrater
+                self.model_multi = self.model_calib
             else:
                 self.logger.info("calibrate each cv models.")
                 if is_binary_fit: self.logger.warning(f"This parameter is not valid for this mode. is_binary_fit: {is_binary_fit}")
@@ -530,7 +573,7 @@ class MLManager:
         if self.is_cvmodel:
             model_mode = "model_multi"
         elif self.is_calib:
-            model_mode = "calibrater"
+            model_mode = "model_calib"
         else:
             model_mode = "model"
         return model_mode
@@ -560,7 +603,7 @@ class MLManager:
             assert np.any(np.array(df_train.columns, dtype=object) == x)
             if df_valid is not None: assert np.any(np.array(df_valid.columns, dtype=object) == x)
         assert isinstance(is_proc_fit, bool)
-        assert check_type(params_fit, [str, dict])
+        assert isinstance(params_fit, (str, dict))
         assert isinstance(is_eval_train, bool)
         if colname_sample_weight is not None:
             assert isinstance(colname_sample_weight, str)
@@ -587,14 +630,13 @@ class MLManager:
             params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
             params_fit = eval(params_fit, {}, params_fit_evaldict)
         self.logger.info(f"model: {self.model}, is_reg: {self.is_reg}, fit params: {params_fit}")
-        self.logger.info("fitting: start ...")
+        self.logger.info("Fitting START ...", color=["BOLD", "GREEN"])
         self.model.fit(train_x, train_y, **params_fit)
-        self.logger.info("fitting: end ...")
+        self.logger.info("Fitting END !!!", color=["BOLD", "GREEN"])
         self.is_fit = True
         # eval
-        self.logger.info("evaluate model.")
         if valid_x is not None:
-            self.logger.info("evaluate valid.")
+            self.logger.info("Evaluate valid START ...", color=["BOLD", "GREEN"])
             se_eval, df_eval = eval_model(valid_x, valid_y, model=self.model, func_predict=self.model_func, is_reg=self.is_reg)
             self.eval_valid_se = se_eval.copy()
             self.eval_valid_df = df_eval.copy()
@@ -607,8 +649,9 @@ class MLManager:
                 self.eval_valid_df[f"oth_{x}"] = ndf
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
+            self.logger.info("Evaluate valid END !!!", color=["BOLD", "GREEN"])
         if is_eval_train:
-            self.logger.info("evaluate train.")
+            self.logger.info("Evaluate train START ...", color=["BOLD", "GREEN"])
             se_eval, df_eval = eval_model(train_x, train_y, model=self.model, func_predict=self.model_func, is_reg=self.is_reg)
             self.eval_train_se = se_eval.copy()
             self.eval_train_df = df_eval.copy()
@@ -621,6 +664,7 @@ class MLManager:
                 self.eval_train_df[f"oth_{x}"] = ndf
             for x in se_eval.index:
                 self.logger.info(f"{x}: {se_eval.loc[x]}")
+            self.logger.info("Evaluate train END !!!", color=["BOLD", "GREEN"])
         else:
             self.eval_train_se = pd.Series({"n_data": train_x.shape[0]}, dtype=object)
         self.logger.info("END")
@@ -825,9 +869,9 @@ class MLManager:
         assert input_x.shape[0] == input_y.shape[0]
         if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
             input_x = input_x[:, -1:] # If it's binary classification.
-        self.calibrater = Calibrater(model, model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
+        self.model_calib = Calibrater(model, model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
         self.logger.info("calibration start...")
-        self.calibrater.fit(input_x, input_y, n_bins=n_bins)
+        self.model_calib.fit(input_x, input_y, n_bins=n_bins)
         self.logger.info("calibration end...")
         self.is_calib = True
         self.logger.info("END")
@@ -913,22 +957,23 @@ class MLManager:
                 json.dump(self.to_json(), f, indent=4)
         self.logger.info("END")
 
-def load_manager(filepath: str, n_jobs: int) -> MLManager:
-    LOGGER.info("START")
-    assert isinstance(n_jobs, int)
-    LOGGER.info(f"load file: {filepath}")
-    with open(filepath, mode='rb') as f:
-        manager = pickle.load(f)
-    manager.__class__ = MLManager
-    manager.logger = set_logger(manager.logger.name, internal_log=True)
-    manager.set_n_jobs(n_jobs)
-    if os.path.exists(filepath.replace('.pickle', '.log')):
-        LOGGER.info(f"load log file: {filepath.replace('.pickle', '.log')}")
-        with open(filepath.replace('.pickle', '.log'), mode='r') as f:
-            manager.logger.internal_stream.write(f.read())
-    manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
-    LOGGER.info("END")
-    return manager
+    @classmethod
+    def load_manager(cls, filepath: str, n_jobs: int):
+        LOGGER.info("START")
+        assert isinstance(n_jobs, int)
+        LOGGER.info(f"load file: {filepath}")
+        with open(filepath, mode='rb') as f:
+            manager = pickle.load(f)
+        manager.__class__ = MLManager
+        manager.logger = set_logger(manager.logger.name, internal_log=True)
+        manager.set_n_jobs(n_jobs)
+        if os.path.exists(filepath.replace('.pickle', '.log')):
+            LOGGER.info(f"load log file: {filepath.replace('.pickle', '.log')}")
+            with open(filepath.replace('.pickle', '.log'), mode='r') as f:
+                manager.logger.internal_stream.write(f.read())
+        manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
+        LOGGER.info("END")
+        return manager
 
 
 class ChainModel:

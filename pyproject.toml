@@ -4,7 +4,7 @@ version = "1.3.3"
 requires-python = ">= 3.12.0"
 description = "usefule library for ML (mainly for table data)."
 dependencies = [
-    'kkgbdt @ git+https://github.com/kazukingh01/kkgbdt.git@46c768a2821644f18f52af7b3bdcb6b2ecb24f24',
+    'kkgbdt @ git+https://github.com/kazukingh01/kkgbdt.git@acaa3a2715c1a78d6b051cacf805ac6acfe0f41a',
     'matplotlib==3.9.4',
     'polars==1.18.0',
     'pyarrow>=18.1.0',

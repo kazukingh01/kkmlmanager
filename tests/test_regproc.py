@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import polars as pl
 from kkmlmanager.regproc import RegistryProc
@@ -14,6 +15,9 @@ if __name__ == "__main__":
     rp.register(ProcAsType(np.float64))
     rp.fit(df[:, 3:-5])
     dfwk1 = rp(df)
+    rp2   = RegistryProc.from_dict(json.loads(json.dumps(rp.to_dict())))
+    dfwk2 = rp2(df)
+    assert np.all(dfwk1 == dfwk2)
     rp = RegistryProc(n_jobs=2, is_auto_colslct=True)
     rp.register(ProcAsType(np.float32, columns=['int_no_nan', 'int_with_nan', 'float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2']))
     rp.register(ProcReplaceInf())
@@ -21,5 +25,7 @@ if __name__ == "__main__":
     rp.register(ProcFillNa(-100))
     rp.register(ProcAsType(np.float64))
     rp.fit(df[:, 3:-5].to_pandas())
-    dfwk2 = rp(df.to_pandas())
-    print(np.all(dfwk1 == dfwk2))
+    dfwk1 = rp(df.to_pandas())
+    rp2   = RegistryProc.from_dict(json.loads(json.dumps(rp.to_dict())))
+    dfwk2 = rp2(df.to_pandas())
+    assert np.all(dfwk1 == dfwk2)

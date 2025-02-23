@@ -1,11 +1,12 @@
+import json
 import numpy as np
 import pandas as pd
 import polars as pl
 
 # local package
-import kkmlmanager.procs as kkprocs
-from kkmlmanager.procs import BaseProc, info_columns
-from kkmlmanager.util.com import check_type, check_type_list
+from . import procs as kkprocs
+from .procs import BaseProc, info_columns
+from .util.com import check_type, check_type_list
 from kklogger import set_logger
 
 
@@ -46,7 +47,7 @@ class RegistryProc(object):
         self.is_fit = False
         self.shape: list[str | int] | tuple = None
         self.check_proc(True) # Default True.
-    
+
     def register(self, proc: str | BaseProc, *args, **kwargs):
         if isinstance(proc, str):
             if "n_jobs" not in kwargs: kwargs["n_jobs"] = self.n_jobs
@@ -178,8 +179,17 @@ class RegistryProc(object):
 
     @classmethod
     def from_dict(cls, dict_regproc: dict):
+        assert isinstance(dict_regproc, dict)
         ins        = cls(n_jobs=dict_regproc["n_jobs"], is_auto_colslct=dict_regproc["is_auto_colslct"])
         ins.procs  = [BaseProc.from_dict(x) for x in dict_regproc["procs"]]
         ins.is_fit = dict_regproc["is_fit"]
         ins.shape  = dict_regproc["shape"]
         return ins
+    
+    def to_json(self, indent: int=None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def load_from_json(cls, json_regproc: str):
+        assert isinstance(json_regproc, str)
+        return cls.from_dict(json.loads(json_regproc))

@@ -1,3 +1,4 @@
+import datetime
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -10,12 +11,14 @@ except ModuleNotFoundError:
     pass
 
 # local package
-from kkmlmanager.util.dataframe import query
-from kkmlmanager.util.com import check_type, check_type_list
+from .util.dataframe import query
+from .util.com import check_type, check_type_list
 
 
 __all__ = [
     "info_columns",
+    "mask_values_for_json",
+    "unmask_values_for_json",
     "NotFittedError",
     "BaseProc",
     "ProcMinMaxScaler",
@@ -53,11 +56,16 @@ def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | 
         shape: tuple = input.shape[1:]
     return shape
 
-def mask_values_for_json(value: int | float | list | dict):
+def mask_values_for_json(value: int | float | list | dict, is_key: bool=False):
+    if is_key:
+        if isinstance(value, int):
+            return f"__int__({value})"
+        elif isinstance(value, float):
+            return f"__float__({value})"
     if isinstance(value, list):
         return [mask_values_for_json(x) for x in value]
     elif isinstance(value, dict):
-        return {mask_values_for_json(x): mask_values_for_json(y) for x, y in value.items()}    
+        return {mask_values_for_json(x, is_key=True): mask_values_for_json(y) for x, y in value.items()}    
     elif isinstance(value, float):
         if np.isnan(value):
             return "__nan__"
@@ -65,6 +73,8 @@ def mask_values_for_json(value: int | float | list | dict):
             return "__inf__"
         elif value == float("-inf"):
             return "__ninf__"
+    elif isinstance(value, (datetime.datetime, datetime.date)):
+        return f"__datetime__({value.strftime('%Y-%m-%d %H:%M:%S.%f%z')})"
     elif isinstance(value, type):
         if value == int:
             return "__int__"
@@ -147,6 +157,16 @@ def unmask_values_for_json(value: int | float | list | dict):
         return pl.Float32
     elif value == "__Float64__":
         return pl.Float64
+    elif isinstance(value, str):
+        if value.startswith("__datetime__("):
+            try:
+                return datetime.datetime.strptime(value, "__datetime__(%Y-%m-%d %H:%M:%S.%f%z)")
+            except ValueError:
+                return datetime.datetime.strptime(value, "__datetime__(%Y-%m-%d %H:%M:%S.%f)")
+        elif value.startswith("__int__("):
+            return int(value.split("__int__(")[1].split(")")[0])
+        elif value.startswith("__float__("):
+            return float(value.split("__float__(")[1].split(")")[0])
     return value
 
 def set_attributes(ins, dict_proc: dict, exclude: list[str]=[]):
@@ -199,7 +219,7 @@ class BaseProc:
                 assert self.shape_in == input.columns
             else:
                 assert isinstance(input, np.ndarray)
-                assert self.shape_in == input.shape[1:]
+                assert tuple(self.shape_in) == input.shape[1:] # After from_dict, shape_in is a list
         output = self.call_main(input, *args, **kwargs)
         if is_check:
             if self.type_out == "pd":
@@ -208,7 +228,7 @@ class BaseProc:
             elif self.type_out == "pl":
                 assert self.shape_out == output.columns
             else:
-                assert self.shape_out == output.shape[1:]
+                assert tuple(self.shape_out) == output.shape[1:] # After from_dict, shape_out is a list
         return output
     def __str__(self):
         attrs_str = ', '.join(
@@ -236,6 +256,7 @@ class BaseProc:
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
+        assert isinstance(dict_proc, dict)
         assert "__class__" in dict_proc
         _cls: BaseProc = globals()[dict_proc["__class__"]]
         assert _cls != __class__
@@ -369,7 +390,7 @@ class ProcFillNa(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["fill_value"])
+        ins = cls(unmask_values_for_json(dict_proc["fill_value"]))
         set_attributes(ins, dict_proc, ["__class__", "fill_value"])
         return ins
 
@@ -404,7 +425,7 @@ class ProcFillNaMinMaxRandomly(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["add_value"])
+        ins = cls(unmask_values_for_json(dict_proc["add_value"]))
         set_attributes(ins, dict_proc, ["__class__", "add_value"])
         return ins
 
@@ -427,8 +448,8 @@ class ProcReplaceValue(BaseProc):
             list_x = list(replace_value.keys())
             list_y = list(replace_value.values())
             assert (
-                (check_type_list(list_x, [int, float]) and check_type_list(list_y, [int, float])) or
-                (check_type_list(list_x, str)          and check_type_list(list_y, str))
+                (check_type_list(list_x, [int, float]) and check_type_list(list_y, [int, float, type(None)])) or
+                (check_type_list(list_x, str)          and check_type_list(list_y, str, type(None)))
             )
         if columns is not None:
             if check_type(columns, [int, str]): columns = [columns, ]
@@ -499,14 +520,14 @@ class ProcReplaceValue(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["replace_value"], columns=dict_proc["columns"])
+        ins = cls(unmask_values_for_json(dict_proc["replace_value"]), columns=dict_proc["columns"])
         set_attributes(ins, dict_proc, ["__class__", "replace_value", "columns"])
         return ins
 
 class ProcReplaceInf(ProcReplaceValue):
     def __init__(self, posinf: float=float("nan"), neginf: float=float("nan"), **kwargs):
-        assert check_type(posinf, float)
-        assert check_type(neginf, float)
+        assert isinstance(posinf, (float, type(None)))
+        assert isinstance(neginf, (float, type(None)))
         super().__init__(replace_value={float("inf"): posinf, float("-inf"): neginf}, **kwargs)
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         super().fit_main(input)
@@ -525,8 +546,9 @@ class ProcReplaceInf(ProcReplaceValue):
         return output
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = super().from_dict(dict_proc)
-        ins.__class__ = cls
+        dictwk = unmask_values_for_json(dict_proc["replace_value"])
+        ins    = cls(posinf=dictwk[float("inf")], neginf=dictwk[float("-inf")])
+        set_attributes(ins, dict_proc, ["__class__", "replace_value"])
         return ins
 
 class ProcToValues(BaseProc):
@@ -589,7 +611,7 @@ class ProcMap(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["values"], dict_proc["column"], dict_proc["fill_null"])
+        ins = cls(unmask_values_for_json(dict_proc["values"]), dict_proc["column"], unmask_values_for_json(dict_proc["fill_null"]))
         set_attributes(ins, dict_proc, ["__class__", "values", "column", "fill_null"])
         return ins
 
@@ -605,7 +627,16 @@ class ProcMapLabelAuto(ProcMap):
         else:
             values = np.unique(input[:, self.column])
         assert np.isnan(values).sum() == 0
-        self.values = {x: i for i, x in enumerate(np.sort(values))}
+        assert values.dtype in [int, str, object, np.int16, np.int32, np.int64]
+        if values.dtype in [int, np.int16, np.int32, np.int64]:
+            self.values = {int(x): i for i, x in enumerate(np.sort(values))}
+        else:
+            self.values = {x: i for i, x in enumerate(np.sort(values))}
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["column"], unmask_values_for_json(dict_proc["fill_null"]))
+        set_attributes(ins, dict_proc, ["__class__", "column", "fill_null"])
+        return ins
     
 class ProcAsType(BaseProc):
     def __init__(self, to_type: type, columns: str | list[str]=None, **kwargs):
@@ -646,7 +677,7 @@ class ProcAsType(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["to_type"], columns=dict_proc["columns"])
+        ins = cls(unmask_values_for_json(dict_proc["to_type"]), columns=dict_proc["columns"])
         set_attributes(ins, dict_proc, ["__class__", "to_type", "columns"])
         return ins
 
@@ -767,7 +798,7 @@ class ProcDigitize(BaseProc):
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
-        ins = cls(dict_proc["bins"], dict_proc["is_percentile"])
+        ins = cls(unmask_values_for_json(dict_proc["bins"]), dict_proc["is_percentile"])
         set_attributes(ins, dict_proc, ["__class__", "bins", "is_percentile"])
         return ins
 

@@ -9,9 +9,9 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 # local package
-from kkmlmanager.regproc import RegistryProc
-from kkmlmanager.util.dataframe import parallel_apply
-from kkmlmanager.util.com import check_type_list
+from .regproc import RegistryProc
+from .util.dataframe import parallel_apply
+from .util.com import check_type_list
 from kklogger import set_logger
 LOGGER = set_logger(__name__)
 
