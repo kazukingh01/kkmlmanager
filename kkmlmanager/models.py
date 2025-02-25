@@ -58,7 +58,7 @@ class MultiModel(BaseModel):
         return self.__str__()
     def to_dict(self) -> dict:
         return {
-            "classes_": self.classes_.copy(),
+            "classes_": self.classes_.copy() if self.classes_ is not None else None,
             "func_predict": self.func_predict,
             "models": [x.to_dict() if isinstance(x, KkGBDT) else base64.b64encode(pickle.dumps(x, protocol=PICKLE_PROTOCOL)).decode('ascii') for x in self.models],
         }

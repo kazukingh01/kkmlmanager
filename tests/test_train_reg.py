@@ -5,7 +5,6 @@ from sklearn.datasets import fetch_california_housing
 # local package
 from kkmlmanager.manager import MLManager
 from kkgbdt import KkGBDT
-from kkgbdt.loss import FocalLoss, Accuracy
 
 
 if __name__ == "__main__":
@@ -33,9 +32,13 @@ if __name__ == "__main__":
     # training normal fit
     manager.fit(
         df_train, df_valid=df_test, is_proc_fit=True, is_eval_train=True,
-        params_fit={"loss_func": "rmse", "num_iterations": 200}
+        params_fit={"loss_func": "rmse", "num_iterations": 200, "x_valid": "_validation_x", "y_valid": "_validation_y"}
     )
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)
+
     # training cross validation
     mask_split = np.ones(df_train.shape[0], dtype=bool)
     mask_split[0] = False
@@ -56,5 +59,13 @@ if __name__ == "__main__":
     manager.set_cvmodel()
     output, input_y, input_index = manager.predict(df_test, is_row=False, is_exp=True, is_ans=False)
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)
+
     # test basic tree model
     manager.fit_basic_treemodel(df_train, df_valid=None, df_test=df_test, ncv=2)
+    se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    ins = MLManager.load_from_json(manager.to_json())
+    _, dfwk = ins.evaluate(df_test, is_store=True)
+    assert df_eval.equals(dfwk)

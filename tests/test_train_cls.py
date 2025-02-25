@@ -22,8 +22,8 @@ if __name__ == "__main__":
     # pre processing
     manager.cut_features_by_variance(df_train, cutoff=0.995, ignore_nan=False)
     manager.cut_features_by_variance(df_train, cutoff=0.995, ignore_nan=True)
-    # manager.cut_features_by_randomtree_importance(df_train, cutoff=None, max_iter=1, min_count=100, dtype="float32")
-    # manager.cut_features_by_adversarial_validation(df_train, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype="float32")
+    manager.cut_features_by_randomtree_importance(df_train, cutoff=None, max_iter=1, min_count=100, dtype="float32")
+    manager.cut_features_by_adversarial_validation(df_train, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype="float32")
     manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='pearson',  batch_size=2, min_n=100)
     manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='spearman', batch_size=2, min_n=100)
     # set model
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     # training normal fit
     manager.fit(
         df_train, df_valid=df_test, is_proc_fit=True, is_eval_train=True,
-        params_fit={"loss_func": "multiclass", "num_iterations": 200, "sample_weight": "balanced"}
+        params_fit={"loss_func": "multiclass", "num_iterations": 200, "sample_weight": "balanced", "x_valid": "_validation_x", "y_valid": "_validation_y"}
     )
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
     ins = MLManager.load_from_json(manager.to_json())

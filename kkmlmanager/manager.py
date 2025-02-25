@@ -13,7 +13,7 @@ from .models import MultiModel, PICKLE_PROTOCOL
 from .calibration import Calibrater
 from .procs import mask_values_for_json, unmask_values_for_json
 from .util.numpy import isin_compare_string
-from .util.com import check_type_list, correct_dirpath, makedirs
+from .util.com import check_type_list, correct_dirpath, makedirs, unmask_values, unmask_value_isin_object
 from kkgbdt import KkGBDT
 from kklogger import set_logger
 LOGGER = set_logger(__name__)
@@ -476,10 +476,10 @@ class MLManager:
         self.logger.info(f"df shape: {df.shape}")
         if is_exp == False and is_ans == False:
             return df, None, indexes
-        self.logger.info(f"proc fit: exp: {is_exp}")
+        self.logger.info(f"proc fit exp: {is_exp}")
         output_x = self.proc_exp.fit(df[self.columns],     check_inout=["row"], is_return_index=False) if is_exp else None
         self.logger.info(f"output_x shape: {output_x.shape if output_x is not None else None}")
-        self.logger.info(f"proc fit: ans: {is_ans}")
+        self.logger.info(f"proc fit ans: {is_ans}")
         output_y = self.proc_ans.fit(df[self.columns_ans], check_inout=["row"], is_return_index=False) if is_ans else None
         self.logger.info(f"output_y shape: {output_y.shape if output_y is not None else None}")
         self.logger.info("END")
@@ -585,7 +585,7 @@ class MLManager:
 
     def fit(
         self, df_train: pd.DataFrame | pl.DataFrame, df_valid: pd.DataFrame | pl.DataFrame=None, is_proc_fit: bool=True, 
-        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False, colname_sample_weight: str=None
+        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False, dict_extra_cols: dict[str, str]=None,
     ):
         """
         params_fit:
@@ -593,7 +593,7 @@ class MLManager:
             >>> model.fit(train_x, train_y, **params_fit)'
         params_fit_evaldict:
             This is used like ...
-            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
+            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
             >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
         """
         self.logger.info("START")
@@ -605,9 +605,9 @@ class MLManager:
         assert isinstance(is_proc_fit, bool)
         assert isinstance(params_fit, (str, dict))
         assert isinstance(is_eval_train, bool)
-        if colname_sample_weight is not None:
-            assert isinstance(colname_sample_weight, str)
-            assert colname_sample_weight in df_train.columns
+        if dict_extra_cols is not None:
+            assert isinstance(dict_extra_cols, dict)
+            for x in dict_extra_cols.keys(): assert x in df_train.columns
         # pre proc
         if is_proc_fit:
             train_x, train_y, train_index = self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
@@ -615,20 +615,35 @@ class MLManager:
             train_x, train_y, train_index = self.proc_call(df_train, is_row=True, is_exp=True, is_ans=True)
         valid_x, valid_y = None, None
         if df_valid is not None:
+            if isinstance(params_fit, str):
+                if (params_fit.find("_validation_x") < 0) or (params_fit.find("_validation_y") < 0):
+                    self.logger.warning("You set the validation data but the data won't pass to the model.")
+            else:
+                if (not unmask_value_isin_object(params_fit, ["_validation_x"])) or (not unmask_value_isin_object(params_fit, ["_validation_y"])):
+                    self.logger.warning("You set the validation data but the data won't pass to the model.")
             valid_x, valid_y, valid_index = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
         if self.model is None: self.logger.raise_error("model is not set.")
-        # fit
-        if isinstance(params_fit, str):
-            assert isinstance(params_fit_evaldict, dict)
-            sample_weight = np.ones(train_x.shape[0], dtype=float)
-            if colname_sample_weight is not None:
+        # other columns (like sample weight)
+        dict_extra = {"_validation_x": valid_x, "_validation_y": valid_y}
+        if dict_extra_cols is not None:
+            for x, y in dict_extra_cols.items():
                 if isinstance(df_train, pl.DataFrame):
-                    sample_weight = df_train[train_index, colname_sample_weight].to_numpy()
+                    dict_extra[f"_train_{y}"] = df_train[train_index, x].to_numpy()
+                    if df_valid is not None:
+                        dict_extra[f"_valid_{y}"] = df_valid[valid_index, x].to_numpy()
                 else:
-                    sample_weight = df_train.loc[train_index, colname_sample_weight].to_numpy(dtype=float).copy()
-            params_fit_evaldict = copy.deepcopy(params_fit_evaldict)
-            params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
+                    dict_extra[f"_train_{y}"] = df_train.loc[train_index, x].to_numpy().copy()
+                    if df_valid is not None:
+                        dict_extra[f"_valid_{y}"] = df_valid.loc[valid_index, x].to_numpy().copy()
+        # update params_fit_evaldict
+        assert isinstance(params_fit_evaldict, dict)
+        params_fit_evaldict = copy.deepcopy(params_fit_evaldict) | dict_extra
+        # update params_fit
+        if isinstance(params_fit, str):
             params_fit = eval(params_fit, {}, params_fit_evaldict)
+        else:
+            params_fit = copy.deepcopy(params_fit)
+            params_fit = unmask_values(params_fit, params_fit_evaldict)
         self.logger.info(f"model: {self.model}, is_reg: {self.is_reg}, fit params: {params_fit}")
         self.logger.info("Fitting START ...", color=["BOLD", "GREEN"])
         self.model.fit(train_x, train_y, **params_fit)
@@ -671,10 +686,11 @@ class MLManager:
 
     def fit_cross_validation(
         self, df_train: pd.DataFrame | pl.DataFrame,
-        n_split: int=None, n_cv: int=None, mask_split: np.ndarray=None, cols_multilabel_split: list[str]=None,
+        n_split: int=None, n_cv: int=None, mask_split: np.ndarray=None,
+        cols_multilabel_split: list[str]=None, group_split: str | list[str]=None,
         indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
         params_fit: str | dict="{}", params_fit_evaldict: dict={},
-        is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, colname_sample_weight: str=None
+        is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, dict_extra_cols: dict[str, str]=None,
     ):
         """
         n_split:
@@ -713,23 +729,36 @@ class MLManager:
             assert len(mask_split.shape) == 1
             assert df_train.shape[0] == mask_split.shape[0]
             assert mask_split.dtype in [bool, np.bool_]
+            assert group_split is None # group_split is not used in mask_split
         if cols_multilabel_split is not None:
+            if isinstance(cols_multilabel_split, str): cols_multilabel_split = [cols_multilabel_split]
+            assert isinstance(cols_multilabel_split, list)
             assert check_type_list(cols_multilabel_split, str)
-        is_fit, ndf_oth = False, None
+        if group_split is not None:
+            if isinstance(group_split, str): group_split = [group_split]
+            assert check_type_list(group_split, str)
+            for x in group_split: assert x in df_train.columns
+        # proc fitting
         index_org = df_train.index.to_numpy() if isinstance(df_train, pd.DataFrame) else np.arange(df_train.shape[0], dtype=int)
         df_train, _, _indexes = self.proc_fit(df_train, is_row=True, is_exp=False, is_ans=False)
-        if isinstance(df_train, pd.DataFrame):
-            ndf_bool = index_org.isin(_indexes)
-        else:
-            ndf_bool = np.isin(index_org, _indexes)
-        if cols_multilabel_split is not None:
-            ndf_oth = df_train[cols_multilabel_split].to_numpy()
-        if mask_split is not None:
-            mask_split = mask_split[ndf_bool]
         if not is_proc_fit_every_cv:
             self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
-            is_fit = True
+        is_fit = (not is_proc_fit_every_cv)
+        # update mask split
+        if mask_split is not None:
+            if isinstance(df_train, pd.DataFrame):
+                ndf_bool = index_org.isin(_indexes)
+            else:
+                ndf_bool = np.isin(index_org, _indexes)
+            mask_split = mask_split[ndf_bool]
+        # split for validation
         if n_split is not None:
+            if group_split is not None:
+                if isinstance(df_train, pl.DataFrame):
+                    df_grp = df_train[group_split].clone().to_pandas().reset_index(drop=True)
+                else:
+                    df_grp = df_train.loc[:, group_split].copy().reset_index(drop=True)
+                ndf_grp = df_grp.groupby(group_split)[df_grp.columns[0]].apply(lambda x: x.index.tolist()).to_numpy()
             indexes_train, indexes_valid = [], []
             if is_fit: _, ndf_y, _ = self.proc_call(df_train, is_row=False, is_exp=False, is_ans=True)
             else:      _, ndf_y, _ = self.proc_fit( df_train, is_row=False, is_exp=False, is_ans=True)
@@ -739,6 +768,7 @@ class MLManager:
                 splitter = StratifiedKFold(n_splits=n_split)
             else:
                 self.logger.info(f"Use splitter: MultilabelStratifiedKFold, n_split: {n_split}, cols_multilabel_split: {cols_multilabel_split}")
+                ndf_oth = df_train[cols_multilabel_split].to_numpy()
                 splitter = MultilabelStratifiedKFold(n_splits=n_split, shuffle=True, random_state=0)
                 if len(ndf_y.shape) == 1: ndf_y = ndf_y.reshape(-1, 1)
                 ndf_y = np.concatenate([ndf_oth, ndf_y], axis=1)
@@ -748,8 +778,18 @@ class MLManager:
                 ndf_y        = ndf_y[~mask_split]
                 self.logger.info(f"Use mask split. mask indexes: {indexes_mask}")
             try:
-                for i_split, (index_train, index_valid) in enumerate(splitter.split(indexes, ndf_y)):
-                    if mask_split is not None: index_train = np.append(index_train, indexes_mask.copy())
+                if group_split is None:
+                    generatot   = splitter.split(indexes, ndf_y)
+                else:
+                    indexes_grp = [x[0] for x in ndf_grp]
+                    generatot   = splitter.split(np.arange(len(ndf_grp), dtype=int), ndf_y[indexes_grp])
+                for i_split, (index_train, index_valid) in enumerate(generatot):
+                    if mask_split is not None:
+                        index_train = np.append(index_train, indexes_mask.copy())
+                    if group_split is not None:
+                        assert mask_split is None
+                        index_train = np.concatenate(ndf_grp[index_train], axis=0)
+                        index_valid = np.concatenate(ndf_grp[index_valid], axis=0)
                     self.logger.info(f"Split: {i_split}. \ntrain indexes: {index_train}\nvalid indexes: {index_valid}")
                     indexes_train.append(index_train)
                     indexes_valid.append(index_valid)
@@ -761,6 +801,7 @@ class MLManager:
                 for i in range(n_cv):
                     indexes_train.append(indexes[~np.isin(indexes, index_split[i])].copy())
                     indexes_valid.append(index_split[i].copy())
+        # cross validation
         for i_cv, (index_train, index_valid) in enumerate(zip(indexes_train, indexes_valid)):
             i_cv += 1
             self.logger.info(f"cross validation : {i_cv} / {n_cv} start...")
@@ -769,7 +810,7 @@ class MLManager:
                 df_train=df_train.iloc[index_train, :] if isinstance(df_train, pd.DataFrame) else df_train[index_train],
                 df_valid=df_train.iloc[index_valid, :] if isinstance(df_train, pd.DataFrame) else df_train[index_valid],
                 is_proc_fit=is_proc_fit_every_cv, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
-                is_eval_train=False, colname_sample_weight=colname_sample_weight
+                is_eval_train=False, dict_extra_cols=dict_extra_cols
             )
             self.logger.info(f"cross validation : {i_cv} / {n_cv} end  ...")
             setattr(self, f"eval_valid_df_cv{str(i_cv).zfill(len(str(n_cv)))}", self.eval_valid_df)

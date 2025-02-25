@@ -8,6 +8,8 @@ __all__ = [
     "correct_dirpath",
     "save_pickle",
     "load_pickle",
+    "unmask_values",
+    "unmask_value_isin_object",
 ]
 
 
@@ -61,3 +63,25 @@ def load_pickle(filepath: str, *args, **kwargs) -> object:
     with open(filepath, mode='rb') as f:
         obj = pickle.load(f, *args, **kwargs)
     return obj
+
+def unmask_values(value: object, map_dict: dict) -> object:
+    assert isinstance(map_dict, dict)
+    if isinstance(value, list):
+        return [unmask_values(v, map_dict) for v in value]
+    elif isinstance(value, tuple):
+        return tuple(unmask_values(v, map_dict) for v in value)
+    elif isinstance(value, dict):
+        return {k: unmask_values(v, map_dict) for k, v in value.items()}
+    else:
+        return map_dict[value] if value in map_dict else value
+
+def unmask_value_isin_object(value: object, map_list: list[object]) -> bool:
+    assert isinstance(map_list, list)
+    if isinstance(value, (tuple, list)):
+        return [unmask_value_isin_object(v, map_list) for v in value]
+    elif isinstance(value, dict):
+        return {k: unmask_value_isin_object(v, map_list) for k, v in value.items()}
+    else:
+        if value in map_list:
+            return True
+    return False
