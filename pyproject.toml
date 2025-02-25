@@ -9,7 +9,7 @@ dependencies = [
     'polars==1.18.0',
     'pyarrow>=18.1.0',
     'iterative-stratification==0.1.7',
-    'torch==2.5.1+cpu', # pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
+    # 'torch==2.5.1+cpu', # pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
 ]
 
 [build-system]

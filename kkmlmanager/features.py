@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 import polars as pl
-import torch
+try: import torch
+except ImportError: torch = None
 from functools import partial
 from joblib import Parallel, delayed
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor, RandomForestClassifier
