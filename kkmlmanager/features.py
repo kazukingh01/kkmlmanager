@@ -130,7 +130,7 @@ def get_features_by_variance_pl(df: pl.DataFrame, cutoff: float=0.99, ignore_nan
     sewk = (df[idx[:, 0]] == df[idx[:, 1]]).sum() > 0
     return sewk.to_pandas().iloc[0]
 
-def corr_coef_pearson_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_gpu(input: np.ndarray, _dtype: str | type="float16", min_n: int=10) -> np.ndarray:
     """
     ref: https://sci-pursuit.com/math/statistics/correlation-coefficient.html
     """
@@ -142,6 +142,8 @@ def corr_coef_pearson_gpu(input: np.ndarray, _dtype=torch.float16, min_n: int=10
             [ 8.,  2.,  9., nan, -7.],
             [ 1., nan,  5.,  5., -1.]])
     """
+    if isinstance(_dtype, str):
+        _dtype = getattr(torch, _dtype)
     tensor_max = torch.from_numpy(np.nanmax(input, axis=0)).to(_dtype).to("cuda:0")
     tensor_min = torch.from_numpy(np.nanmin(input, axis=0)).to(_dtype).to("cuda:0")
     tensor_max = (tensor_max - tensor_min)
