@@ -4,7 +4,7 @@ import pandas as pd
 from optuna.samplers import TPESampler
 # local package
 from kklogger import set_logger
-logger = set_logger(__name__)
+LOGGER = set_logger(__name__)
 
 
 __all__ = [
@@ -23,7 +23,7 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
         sudo docker exec --user=postgres postgres /usr/lib/postgresql/13/bin/dropdb optuna
         sudo docker exec --user=postgres postgres /usr/lib/postgresql/13/bin/createdb --encoding=UTF8 --locale=ja_JP.utf8 --template=template0 optuna
     """
-    logger.info("START")
+    LOGGER.info("START")
     assert isinstance(n_trials, int)
     assert storage is None or isinstance(storage, str)
     assert isinstance(is_new, bool)
@@ -34,26 +34,26 @@ def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name
     sampler = TPESampler(n_startup_trials=100, n_ei_candidates=100, multivariate=False, constant_liar=True)
     if is_new:
         if storage is not None:
-            logger.info(f"create study. storage: {storage}, name: {name}")
+            LOGGER.info(f"create study. storage: {storage}, name: {name}")
             study = optuna.create_study(study_name=name, sampler=sampler, storage=storage, **kwargs)
         else:
-            logger.info(f"load study. storage: {storage}, name: {name}")
+            LOGGER.info(f"load study. storage: {storage}, name: {name}")
             study = optuna.create_study(study_name=name, sampler=sampler, storage=f'sqlite:///{name}.db', **kwargs)
     else:
         assert isinstance(storage, str)
         study = optuna.load_study(study_name=name, sampler=sampler, storage=storage)
-    logger.info(f"start study. func: {func}, n_trials: {n_trials}")
+    LOGGER.info(f"start study. func: {func}, n_trials: {n_trials}")
     if prev_study_name is not None:
         assert isinstance(prev_study_name, str)
-        logger.info(f"use CmaEsSampler with previous study: {prev_study_name}")
+        LOGGER.info(f"use CmaEsSampler with previous study: {prev_study_name}")
         study_prev    = optuna.load_study(storage=storage, study_name=prev_study_name)
         study.sampler = optuna.samplers.CmaEsSampler(source_trials=study_prev.trials)
     study.optimize(func, n_trials=n_trials, n_jobs=n_jobs)
-    logger.info("END")
+    LOGGER.info("END")
     return study
 
 def load_study(storage: str, name: str):
-    logger.info("START")
+    LOGGER.info("START")
     study = optuna.load_study(study_name=name, storage=storage)
     df    = pd.DataFrame([
         [x.number, x.state, x.datetime_start, x.datetime_complete] for x in study.trials
@@ -66,7 +66,7 @@ def load_study(storage: str, name: str):
     dfwk2.columns = [f"values_{i}" for i, _ in enumerate(dfwk2.columns)]
     dfwk3.columns = [f"usrattr_{x}" for x in dfwk3.columns]
     df = pd.concat([df, dfwk1, dfwk2, dfwk3], axis=1, ignore_index=False)
-    logger.info("END")
+    LOGGER.info("END")
     return df, study
 
 def model_parameter_search(
@@ -108,20 +108,20 @@ def model_parameter_search(
             )
         >>> create_study(func, 100, storage=None, is_new=True, name="test")
     """
-    logger.info("START")
+    LOGGER.info("START")
     params = {}
     for x, y in params_search.items():
         params[x] = eval(y, {}, {"trial": trial})
     params.update(params_const)
     model = eval(string_model.strip(), {}, params)
-    logger.info(f"model: {model}")
-    logger.info("fitting...")
+    LOGGER.info(f"model: {model}")
+    LOGGER.info("fitting...")
     params.update({"_model": model})
     eval(string_fit.strip(), {}, params)
-    logger.info("predict...")
+    LOGGER.info("predict...")
     output = eval(string_pred.strip(), {}, params)
     params.update({"_output": output})
-    logger.info("evaluate...")
+    LOGGER.info("evaluate...")
     value  = eval(string_eval.strip(), {}, params)
-    logger.info("END")
+    LOGGER.info("END")
     return value

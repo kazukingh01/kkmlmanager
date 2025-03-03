@@ -115,20 +115,30 @@ def get_features_by_variance_func2(df: pd.DataFrame, cutoff: float=None):
     return seret, None
 
 def get_features_by_variance_pl(df: pl.DataFrame, cutoff: float=0.99, ignore_nan: bool=True, n_divide: int=10000) -> pd.Series:
-    df     = df.with_columns(pl.all().fill_nan(None).sort())
+    assert isinstance(df, pl.DataFrame)
+    assert isinstance(cutoff, float) and 0.0 < cutoff < 1.0
+    assert isinstance(ignore_nan, bool)
+    assert isinstance(n_divide, int) and n_divide >= 1000
+    df     = df.with_columns(
+        pl.col([x for x, y in df.schema.items() if y in [pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64]]).fill_nan(None)
+    ).with_columns(pl.all().sort())
     n_data = df.shape[0]
     if ignore_nan:
         se_null = df.null_count()
+        if np.any((se_null == n_data).to_numpy()):
+            LOGGER.raise_error("Some columns have all NaN values. You should set ignore_nan=False first.", ValueError())
         dictwk  = {x.name: np.round(np.linspace(x[0], n_data - 1, n_divide)).astype(int) for x in se_null}
         df      = pl.concat([df[x][y].to_frame() for x, y in dictwk.items()], how="horizontal")
     else:
         idx = np.round(np.linspace(0, n_data - 1, n_divide)).astype(int)
         df  = df[idx]
-    idx  = np.arange(n_divide, dtype=int)
-    idx  = np.stack([idx, idx + int(n_divide * cutoff)]).T
-    idx  = idx[np.sum(idx >= n_divide, axis=1) == 0]
-    sewk = (df[idx[:, 0]] == df[idx[:, 1]]).sum() > 0
-    return sewk.to_pandas().iloc[0]
+    idx    = np.arange(n_divide, dtype=int)
+    idx    = np.stack([idx, idx + int(n_divide * cutoff)]).T
+    idx    = idx[np.sum(idx >= n_divide, axis=1) == 0]
+    ndfwk1 = (df[idx[:, 0]] == df[idx[:, 1]]).fill_null(False).to_numpy()
+    ndfwk2 = (df[idx[:, 0]].with_columns(pl.all().is_null()).to_numpy() & df[idx[:, 1]].with_columns(pl.all().is_null()).to_numpy())
+    sebool = pd.Series((ndfwk1 | ndfwk2).sum(axis=0) > 0, index=df.columns)
+    return sebool
 
 def corr_coef_pearson_gpu(input: np.ndarray, _dtype: str | type="float16", min_n: int=10) -> np.ndarray:
     """
@@ -233,30 +243,31 @@ def corr_coef_pearson_gpu(input: np.ndarray, _dtype: str | type="float16", min_n
     LOGGER.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_pearson_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dtype=np.float32, min_n: int=10) -> np.ndarray:
+def corr_coef_pearson_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dtype=np.float32, min_n: int=1000) -> np.ndarray:
     """
     Faster than corr_coef_pearson_2array(..., is_gpu=False)
     """
     LOGGER.info("START")
+    assert len(input_x.shape) == len(input_y.shape) == 2
     assert input_x.shape[0] == input_y.shape[0]
+    assert input_x.shape[0] < np.iinfo(np.int32).max
     input_x, input_y = input_x.astype(dtype), input_y.astype(dtype)
     ndf = []
     for input in [input_x, input_y]:
-        ndf_max = np.nanmax(input, axis=0)
-        ndf_min = np.nanmin(input, axis=0)
-        ndf_max = (ndf_max - ndf_min)
-        ndf_max[ndf_max == 0] = float("inf") # To avoid division by zero
+        input   = input - np.nanmin(input, axis=0).reshape(1, -1)
+        ndf_max = np.nanmax(input, axis=0).reshape(1, -1)
+        ndf_max[ndf_max < 1e-10] = float("inf") # To avoid division by zero
+        input   = input / ndf_max
         ndf.append(input)
-        ndf[-1] = (ndf[-1] - ndf_min) / ndf_max
     ndf_x, ndf_y = ndf
     ndf_x_mean   = np.nanmean(ndf_x, axis=0)
     ndf_y_mean   = np.nanmean(ndf_y, axis=0)
-    ndf_x        = ndf_x - ndf_x_mean
-    ndf_y        = ndf_y - ndf_y_mean
+    ndf_x        = ndf_x - ndf_x_mean.reshape(1, -1)
+    ndf_y        = ndf_y - ndf_y_mean.reshape(1, -1)
     ndf_x_nan    = np.isnan(ndf_x)
     ndf_y_nan    = np.isnan(ndf_y)
-    ndf_x[ndf_x_nan] = 0
-    ndf_y[ndf_y_nan] = 0
+    ndf_x[ndf_x_nan] = dtype(0)
+    ndf_y[ndf_y_nan] = dtype(0)
     ndf_n_Sx  = (~ndf_x_nan).sum(axis=0)
     ndf_n_Sy  = (~ndf_y_nan).sum(axis=0)
     ndf_x_nan = (~ndf_x_nan).astype(np.int32)
@@ -317,9 +328,11 @@ def corr_coef_pearson_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: st
     LOGGER.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is_to_rank: bool=True, dtype=np.float32, min_n: int=10) -> np.ndarray:
+def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is_to_rank: bool=True, dtype=np.float32, min_n: int=10, chunk_size: int=10000) -> np.ndarray:
     """
-    Faster than corr_coef_spearman_2array(..., is_gpu=False)
+    When calculating the Spearman correlation coefficient with NaN values, rankings should be done on the values excluding the NaNs.
+    However, calculating this between columns is too slow. Therefore, I first normalize the values to a 0-1 range and 
+    then scale them back to the original range (excluding NaNs) to prevent divergence during normalization.
     """
     LOGGER.info("START")
     assert isinstance(input_x, np.ndarray)
@@ -334,12 +347,23 @@ def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is
     input_x = input_x.astype(dtype)
     input_y = input_y.astype(dtype)
     if is_to_rank:
-        input_x = pl.from_numpy(input_x).fill_nan(None).with_columns(pl.all().rank(method="average")).to_numpy()
-        input_y = pl.from_numpy(input_y).fill_nan(None).with_columns(pl.all().rank(method="average")).to_numpy()
+        input_x = pl.from_numpy(input_x).fill_nan(None).with_columns(pl.all().rank(method="random")).to_numpy()
+        input_y = pl.from_numpy(input_y).fill_nan(None).with_columns(pl.all().rank(method="random")).to_numpy()
+    ndf = []
+    for input in [input_x, input_y]:
+        input   = input - np.nanmin(input, axis=0).reshape(1, -1)
+        ndf_max = np.nanmax(input, axis=0).reshape(1, -1)
+        ndf_max[ndf_max < 1e-10] = float("inf") # To avoid division by zero
+        input   = input / ndf_max
+        ndf.append(input)
+    ndf_x, ndf_y = ndf
     list_corr = []
-    for _input_y, _ndf_not_nan_y in zip(input_y.T, ndf_not_nan_y.T):
-        ndf_n = (ndf_not_nan_x & _ndf_not_nan_y.reshape(-1, 1)).sum(axis=0)
-        list_corr.append(1 - (np.nansum((input_x - _input_y.reshape(-1, 1)) ** 2, axis=0) * 6 / (ndf_n * (ndf_n ** 2 - 1))))
+    for _ndf_y, _ndf_not_nan_y in zip(ndf_y.T, ndf_not_nan_y.T):
+        ndf_n  = (ndf_not_nan_x & _ndf_not_nan_y.reshape(-1, 1)).sum(axis=0)
+        _ndf_y = np.tile(_ndf_y, (ndf_x.shape[1], 1)).T
+        _ndf_x =  ndf_x * ndf_n.reshape(1, -1)
+        _ndf_y = _ndf_y * ndf_n.reshape(1, -1)
+        list_corr.append(1 - (6 * np.nansum((_ndf_x - _ndf_y) ** 2, axis=0) / (ndf_n ** 3 - ndf_n)))
     ndf_not_nan = ndf_not_nan_x.T.astype(np.int32) @ ndf_not_nan_y.astype(np.int32)
     ndf_corr    = np.stack(list_corr).T.astype(dtype)
     assert ndf_corr.shape == ndf_not_nan.shape
@@ -358,8 +382,8 @@ def corr_coef_spearman_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank
     if not is_gpu: LOGGER.warning("Note that the calculation is 'very SLOW'.")
     device = "cuda:0" if is_gpu else "cpu"
     if is_to_rank:
-        df_x = df_x.with_columns(pl.all().rank(method="average"))
-        df_y = df_y.with_columns(pl.all().rank(method="average"))
+        df_x = df_x.with_columns(pl.all().rank(method="random"))
+        df_y = df_y.with_columns(pl.all().rank(method="random"))
     input_x, input_y = df_x.to_numpy(), df_y.to_numpy()
     assert len(input_x.shape) == len(input_y.shape) == 2
     assert input_x.shape[0] == input_y.shape[0]
@@ -525,7 +549,8 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
     LOGGER.info("convert to astype...")
     df = df.with_columns(pl.all().cast({"float16": pl.Float32, "float32": pl.Float32, "float64": pl.Float64}[dtype]))
     if corr_type == "spearman":
-        df = df.with_columns(pl.all().rank(method='average'))
+        assert df.shape[0] <= 100000 # if n data is large, the calculation is explode
+        df = df.with_columns(pl.all().rank(method='random'))
     if is_gpu:
         LOGGER.info(f"calculate correlation [GPU] corr_type: {corr_type}...")
         n_iter = int(((len(batch) ** 2 - len(batch)) / 2) + len(batch))

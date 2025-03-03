@@ -93,10 +93,10 @@ class MLManager:
     
     def to_json(self, indent: int=None):
         dictwk = {
-            "model": self.model.to_dict() if isinstance(self.model, KkGBDT) else base64.b64encode(pickle.dumps(self.model, protocol=PICKLE_PROTOCOL)).decode('ascii'),
-            "model_class": f"__{self.model_class.__class__.__name__}__" if self.model_class in [KkGBDT] else base64.b64encode(pickle.dumps(self.model_class, protocol=PICKLE_PROTOCOL)).decode('ascii'),
-            "model_args": [mask_values_for_json(x) for x in self.model_args],
-            "model_kwargs": {k: mask_values_for_json(v) for k, v in self.model_kwargs.items()},
+            "model": (self.model.to_dict() if isinstance(self.model, KkGBDT) else base64.b64encode(pickle.dumps(self.model, protocol=PICKLE_PROTOCOL)).decode('ascii')) if self.is_fit else None,
+            "model_class": f"__{self.model_class.__name__}__" if self.model_class in [KkGBDT] else base64.b64encode(pickle.dumps(self.model_class, protocol=PICKLE_PROTOCOL)).decode('ascii'),
+            "model_args": [mask_values_for_json(x) for x in self.model_args] if hasattr(self, "model_args") else None,
+            "model_kwargs": {k: mask_values_for_json(v) for k, v in self.model_kwargs.items()} if hasattr(self, "model_kwargs") else None,
             "model_multi": self.model_multi.to_dict() if self.model_multi is not None else None,
             "model_calib": self.model_calib.to_dict() if self.model_calib is not None else None,
             "model_func": self.model_func,
@@ -121,10 +121,13 @@ class MLManager:
         return json.dumps(dictwk, indent=indent)
 
     @classmethod
-    def load_from_json(cls, json_str: str, n_jobs: int=None):
-        assert isinstance(json_str, str)
+    def load_from_json(cls, json_str: str | dict, n_jobs: int=None):
+        assert isinstance(json_str, (str, dict))
         assert n_jobs is None or isinstance(n_jobs, int)
-        dictwk = json.loads(json_str)
+        if isinstance(json_str, str):
+            dictwk = json.loads(json_str)
+        else:
+            dictwk = json_str
         n_jobs = dictwk["n_jobs"] if n_jobs is None else n_jobs
         ins = cls(
             dictwk["columns_exp"], dictwk["columns_ans"], columns_oth=dictwk["columns_oth"],
@@ -134,13 +137,13 @@ class MLManager:
         for x, y in dictwk.items():
             if x in exclude_list: continue
             if x == "model":
-                ins.model = KkGBDT.from_dict(y) if isinstance(y, dict) else pickle.loads(base64.b64decode(y))
+                ins.model = (KkGBDT.from_dict(y) if isinstance(y, dict) else pickle.loads(base64.b64decode(y))) if y is not None else None
             elif x == "model_class":
-                ins.model_class = KkGBDT if y == f"__{KkGBDT.__class__.__name__}__" else pickle.loads(base64.b64decode(y))
+                ins.model_class = (KkGBDT if y == f"__{KkGBDT.__name__}__" else pickle.loads(base64.b64decode(y))) if y is not None else None
             elif x == "model_args":
-                ins.model_args = tuple([unmask_values_for_json(y[i]) for i in range(len(y))])
+                ins.model_args = tuple([unmask_values_for_json(y[i]) for i in range(len(y))]) if y is not None else None
             elif x == "model_kwargs":
-                ins.model_kwargs = {k: unmask_values_for_json(v) for k, v in y.items()}
+                ins.model_kwargs = {k: unmask_values_for_json(v) for k, v in y.items()} if y is not None else None
             elif x == "model_multi":
                 ins.model_multi = MultiModel.from_dict(y) if y is not None else None
             elif x == "model_calib":
@@ -971,48 +974,54 @@ class MLManager:
         self.proc_exp.n_jobs = n_jobs
         self.proc_ans.n_jobs = n_jobs
 
-    def save(self, dirpath: str, filename: str=None, exist_ok: bool=False, remake: bool=False, encoding: str="utf8", is_minimum: bool=False, is_only_log: bool=False):
+    def save(self, dirpath: str=None, filename: str=None, is_remake: bool=False, is_json: bool=False, is_minimum: bool=False, encoding: str="utf8"):
         self.logger.info("START")
-        assert isinstance(dirpath, str)
-        assert isinstance(exist_ok, bool)
-        assert isinstance(remake, bool)
+        assert isinstance(dirpath, str) or dirpath is None
+        assert isinstance(is_remake,  bool)
+        assert isinstance(is_json,    bool)
         assert isinstance(is_minimum, bool)
-        assert isinstance(is_only_log, bool)
-        dirpath = correct_dirpath(dirpath)
-        makedirs(dirpath, exist_ok=exist_ok, remake=remake)
-        if filename is None: filename = f"mlmanager.{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.{id(self)}"
-        self.logger.info(f"save file: {dirpath + filename}.")
-        if is_minimum:
-            if is_only_log == False:
-                with open(dirpath + filename + ".min.pickle", mode='wb') as f:
-                    pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=4)
-            with open(dirpath + filename + ".min.log", mode='w', encoding=encoding) as f:
-                f.write(self.logger.internal_stream.getvalue())
-        else:
-            if is_only_log == False:
-                with open(dirpath + filename + ".pickle", mode='wb') as f:
-                    pickle.dump(self, f, protocol=4)
-            with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
-                f.write(self.logger.internal_stream.getvalue())
+        dirpath = correct_dirpath(dirpath) if dirpath is not None else "./"
+        assert not (dirpath == "./" and is_remake == True)
+        makedirs(dirpath, exist_ok=True, remake=is_remake)
+        filename = f"mlmanager.{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.{id(self)}" if filename is None else filename
+        self.logger.info(f"save file: {dirpath + filename}")
+        if is_json:
             with open(dirpath + filename + ".json", mode='w', encoding=encoding) as f:
-                json.dump(self.to_json(), f, indent=4)
+                f.write(self.to_json(indent=4))
+        else:
+            if is_minimum:
+                with open(dirpath + filename + ".min.pickle", mode='wb') as f:
+                    pickle.dump(self.copy(is_minimum=is_minimum), f, protocol=PICKLE_PROTOCOL)
+                with open(dirpath + filename + ".min.log", mode='w', encoding=encoding) as f:
+                    f.write(self.logger.internal_stream.getvalue())
+            else:
+                with open(dirpath + filename + ".pickle", mode='wb') as f:
+                    pickle.dump(self, f, protocol=PICKLE_PROTOCOL)
+                with open(dirpath + filename + ".log", mode='w', encoding=encoding) as f:
+                    f.write(self.logger.internal_stream.getvalue())
         self.logger.info("END")
 
     @classmethod
-    def load_manager(cls, filepath: str, n_jobs: int):
+    def load(cls, filepath: str, n_jobs: int, encoding: str="utf8"):
         LOGGER.info("START")
         assert isinstance(n_jobs, int)
+        assert isinstance(filepath, str)
         LOGGER.info(f"load file: {filepath}")
-        with open(filepath, mode='rb') as f:
-            manager = pickle.load(f)
-        manager.__class__ = MLManager
-        manager.logger = set_logger(manager.logger.name, internal_log=True)
-        manager.set_n_jobs(n_jobs)
-        if os.path.exists(filepath.replace('.pickle', '.log')):
-            LOGGER.info(f"load log file: {filepath.replace('.pickle', '.log')}")
-            with open(filepath.replace('.pickle', '.log'), mode='r') as f:
-                manager.logger.internal_stream.write(f.read())
-        manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
+        if filepath.endswith(".json"):
+            with open(filepath, mode='r', encoding=encoding) as f:
+                dictwk = json.load(f)
+            manager = cls.load_from_json(dictwk, n_jobs=n_jobs)
+        else:
+            with open(filepath, mode='rb') as f:
+                manager: MLManager = pickle.load(f)
+            manager.__class__ = MLManager
+            manager.logger = set_logger(manager.logger.name, internal_log=True)
+            manager.set_n_jobs(n_jobs)
+            if os.path.exists(filepath.replace('.pickle', '.log')):
+                LOGGER.info(f"load log file: {filepath.replace('.pickle', '.log')}")
+                with open(filepath.replace('.pickle', '.log'), mode='r') as f:
+                    manager.logger.internal_stream.write(f.read())
+            manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
         LOGGER.info("END")
         return manager
 
