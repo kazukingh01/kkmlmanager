@@ -19,6 +19,7 @@ LOGGER = set_logger(__name__)
 
 __all__ = [
     "get_features_by_variance",
+    "get_features_by_variance_pl",
     "corr_coef_gpu_2array",
     "corr_coef_pearson_2array_numpy",
     "corr_coef_pearson_2array",
@@ -119,9 +120,10 @@ def get_features_by_variance_pl(df: pl.DataFrame, cutoff: float=0.99, ignore_nan
     assert isinstance(cutoff, float) and 0.0 < cutoff < 1.0
     assert isinstance(ignore_nan, bool)
     assert isinstance(n_divide, int) and n_divide >= 1000
-    df     = df.with_columns(
-        pl.col([x for x, y in df.schema.items() if y in [pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64]]).fill_nan(None)
-    ).with_columns(pl.all().sort())
+    df = df.with_columns([
+        pl.col(pl.Float32).fill_nan(None),
+        pl.col(pl.Float64).fill_nan(None),
+    ]).with_columns(pl.all().sort())
     n_data = df.shape[0]
     if ignore_nan:
         se_null = df.null_count()
@@ -135,10 +137,10 @@ def get_features_by_variance_pl(df: pl.DataFrame, cutoff: float=0.99, ignore_nan
     idx    = np.arange(n_divide, dtype=int)
     idx    = np.stack([idx, idx + int(n_divide * cutoff)]).T
     idx    = idx[np.sum(idx >= n_divide, axis=1) == 0]
-    ndfwk1 = (df[idx[:, 0]] == df[idx[:, 1]]).fill_null(False).to_numpy()
-    ndfwk2 = (df[idx[:, 0]].with_columns(pl.all().is_null()).to_numpy() & df[idx[:, 1]].with_columns(pl.all().is_null()).to_numpy())
-    sebool = pd.Series((ndfwk1 | ndfwk2).sum(axis=0) > 0, index=df.columns)
-    return sebool
+    dfwk1  = df[idx[:, 0]]
+    dfwk2  = df[idx[:, 1]]
+    sebool = (dfwk1.with_columns([(pl.col(x) == dfwk2[x]) | (pl.col(x).is_null() & dfwk2[x].is_null()) for x in dfwk1.columns]).sum() > 0)
+    return sebool.to_pandas().iloc[0]
 
 def corr_coef_pearson_gpu(input: np.ndarray, _dtype: str | type="float16", min_n: int=10) -> np.ndarray:
     """
