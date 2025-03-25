@@ -25,7 +25,7 @@ if __name__ == "__main__":
     manager.cut_features_by_randomtree_importance(df_train, cutoff=None, max_iter=1, min_count=100, dtype="float32")
     manager.cut_features_by_adversarial_validation(df_train, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype="float32")
     manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='pearson',  batch_size=2, min_n=100)
-    manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='spearman', batch_size=2, min_n=100)
+    manager.cut_features_by_correlation(df_train, cutoff=None, dtype='float32', is_gpu=False, corr_type='spearman', batch_size=2, min_n=100, sample_size=100000)
     # set model
     n_class = df_train["__answer"].unique().len()
     manager.set_model(KkGBDT, n_class, model_func_predict="predict", mode="lgb", learning_rate=0.1, max_bin=64, max_depth=-1)
