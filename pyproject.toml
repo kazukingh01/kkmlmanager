@@ -8,7 +8,7 @@ dependencies = [
     'matplotlib==3.9.4',
     'polars==1.18.0',
     'pyarrow>=18.1.0',
-    'iterative-stratification==0.1.7',
+    'iterative-stratification==0.1.9',
     # 'torch==2.5.1+cpu', # pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
 ]
 
