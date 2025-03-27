@@ -235,7 +235,7 @@ class MLManager:
         self.logger.info("START")
         assert isinstance(features, (np.ndarray, list))
         if isinstance(features, list):
-            check_type_list(features, str)
+            assert check_type_list(features, str)
             features = np.ndarray(features)
         assert np.all(isin_compare_string(features, self.columns))
         self.columns_hist.append(self.columns.copy())
@@ -284,7 +284,7 @@ class MLManager:
         assert sample_size is None or (isinstance(sample_size, int) and 0 < sample_size)
         assert dtype     in ["float16", "float32", "float64"]
         assert corr_type in ["pearson", "spearman"]
-        if sample_size is None:
+        if sample_size is None and df is not None:
             sample_size = df.shape[0]
         if df is not None:
             assert sample_size <= df.shape[0]
@@ -313,6 +313,8 @@ class MLManager:
                 self.logger.info(f"feature: {x}, compare: {sewk.index[index]}, corr: {sewk.iloc[index]}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
             self.update_features(columns)
+        else:
+            self.logger.info(f"cutoff is not set so no updated columns.")
         self.logger.info("END")
 
     def cut_features_by_randomtree_importance(
@@ -349,6 +351,8 @@ class MLManager:
             for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_treeimp.loc[x, 'ratio']}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
             self.update_features(columns)
+        else:
+            self.logger.info(f"cutoff is not set so no updated columns.")
         self.logger.info("END")
 
     def cut_features_by_adversarial_validation(
@@ -394,13 +398,15 @@ class MLManager:
             for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_adv.loc[x, 'ratio']}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
             self.update_features(columns)
+        else:
+            self.logger.info(f"cutoff is not set so no updated columns.")
         self.logger.info("END")
 
     def cut_features_auto(
         self, df: pd.DataFrame=None, df_test: pd.DataFrame=None, 
         list_proc: list[str] = [
-            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False, batch_size=128)",
-            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True,  batch_size=128)",
+            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=False)",
+            "self.cut_features_by_variance(df, cutoff=0.99, ignore_nan=True )",
             "self.cut_features_by_randomtree_importance(df, cutoff=None, max_iter=5, min_count=1000, dtype=np.float32, batch_size=25)",
             "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype=np.float32, batch_size=25)",
             "self.cut_features_by_correlation(df, cutoff=0.99, dtype='float16', is_gpu=True, corr_type='pearson',  batch_size=2000, min_n=100)",
