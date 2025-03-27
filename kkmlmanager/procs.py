@@ -43,6 +43,7 @@ __all__ = [
 
 
 DTYPES_PL_NOT_NAN = [pl.String, pl.Categorical, pl.Datetime, pl.Date, pl.Boolean]
+COLS_NOT_DISP = ["shape_in", "shape_out", "is_check", "is_fit", "type_in", "type_out"]
 
 
 def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | list | tuple:
@@ -173,6 +174,16 @@ def set_attributes(ins, dict_proc: dict, exclude: list[str]=[]):
     for x, y in {a: b for a, b in dict_proc.items() if a not in exclude}.items():
         setattr(ins, x, unmask_values_for_json(y))
 
+def disp_columns(columns: None | str | int | list[str], max_disp: int=10) -> str:
+    if isinstance(columns, list):
+        if len(columns) <= max_disp:
+            return f"{columns}"
+        else:
+            return f"{str(columns[:max_disp])[:-1]}, ... ]"
+    else:
+        return str(columns)
+
+
 class NotFittedError(Exception):
     pass
 
@@ -233,7 +244,7 @@ class BaseProc:
     def __str__(self):
         attrs_str = ', '.join(
             f'{k}={v!r}' for k, v in vars(self).items()
-            if not k in ["shape_in", "shape_out", "is_check", "is_fit", "type_in", "type_out"]
+            if not k in COLS_NOT_DISP
         )
         return f'{self.__class__.__name__}({attrs_str})'
     def __repr__(self):
@@ -456,6 +467,12 @@ class ProcReplaceValue(BaseProc):
             assert check_type_list(columns, [int, str])
         self.replace_value = replace_value
         self.columns       = columns
+    def __str__(self):
+        attrs_str = ', '.join(
+            (f'{k}={v!r}' if k != "columns" else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
+            if not k in COLS_NOT_DISP
+        )
+        return f'{self.__class__.__name__}({attrs_str})'
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if self.type_in == "pd":
             if self.is_dict_rep:
@@ -571,7 +588,7 @@ class ProcMap(BaseProc):
     def __init__(self, values: dict, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
         assert isinstance(values, dict) and len(values) > 0
         assert check_type(column, [int, str])
-        assert check_type(fill_null, [int, float, str])
+        assert check_type(fill_null, [int, float, str, type(None)])
         super().__init__(**kwargs)
         self.column    = column
         self.values    = values
@@ -579,7 +596,8 @@ class ProcMap(BaseProc):
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if self.type_in in ["pd", "pl"]:
             assert self.column in input.columns
-            assert not "__work" in input.columns
+            if self.type_in == "pl" and isinstance(self.fill_null, float) and np.isnan(self.fill_null):
+                self.fill_null = None
         else:
             assert len(input.shape) == 2
             assert isinstance(self.column, int)
@@ -588,15 +606,7 @@ class ProcMap(BaseProc):
         if   self.type_in == "pd":
             output[self.column] = output[self.column].map(self.values).fillna(self.fill_null)
         elif self.type_in == "pl":
-            columns = output.columns.copy()
-            dfwk    = pl.DataFrame([[x, y] for x, y in self.values.items()], strict=False, orient="row", schema=[self.column, "__work"])
-            dfwk    = dfwk.with_columns(pl.col(self.column).cast(output[self.column].dtype))
-            output  = output.join(dfwk, how="left", on=self.column)
-            output  = output.rename({self.column: "__tmp", "__work": self.column}).select(columns)
-            if output[self.column].dtype in DTYPES_PL_NOT_NAN:
-                output = output.with_columns(pl.col(self.column).fill_null(self.fill_null))
-            else:
-                output = output.with_columns(pl.col(self.column).fill_nan(None).fill_null(self.fill_null))
+            output = input.with_columns(pl.col(self.column).replace_strict(self.values, default=self.fill_null).alias(self.column))
         else:
             ndf = output[:, self.column].copy()
             ndf = np.vectorize(lambda x: self.values.get(x))(ndf)
@@ -617,8 +627,6 @@ class ProcMap(BaseProc):
 
 class ProcMapLabelAuto(ProcMap):
     def __init__(self, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
-        assert check_type(column, [int, str])
-        assert check_type(fill_null, [int, float, str])
         super().__init__({"tmp": 0}, column, fill_null=fill_null, **kwargs)
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         super().fit_main(input) # for checking
@@ -646,6 +654,12 @@ class ProcAsType(BaseProc):
         super().__init__(**kwargs)
         self.to_type = to_type
         self.columns = columns
+    def __str__(self):
+        attrs_str = ', '.join(
+            (f'{k}={v!r}' if k != "columns" else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
+            if not k in COLS_NOT_DISP
+        )
+        return f'{self.__class__.__name__}({attrs_str})'
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if   self.type_in == "pd":
             if self.columns is None:
@@ -710,6 +724,12 @@ class ProcDropNa(BaseProc):
         assert check_type_list(columns, [int, str])
         super().__init__(**kwargs)
         self.columns = columns
+    def __str__(self):
+        attrs_str = ', '.join(
+            (f'{k}={v!r}' if k != "columns" else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
+            if not k in COLS_NOT_DISP
+        )
+        return f'{self.__class__.__name__}({attrs_str})'
     def fit_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         if self.type_in in ["pd", "pl"]:
             for x in self.columns: assert x in input.columns

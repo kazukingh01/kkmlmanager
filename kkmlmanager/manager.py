@@ -21,7 +21,6 @@ LOGGER = set_logger(__name__)
 
 __all__ = [
     "MLManager",
-    "load_manager",
 ]
 
 
