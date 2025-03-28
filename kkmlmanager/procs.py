@@ -635,8 +635,8 @@ class ProcMapLabelAuto(ProcMap):
         else:
             values = np.unique(input[:, self.column])
         assert np.vectorize(lambda x: np.isnan(x) if isinstance(x, float) else x == None)(values).sum() == 0 # np.isnan is not supported for object dtype.
-        assert values.dtype in [int, str, object, np.int16, np.int32, np.int64]
-        if values.dtype in [int, np.int16, np.int32, np.int64]:
+        assert values.dtype in [int, str, object, np.int8, np.int16, np.int32, np.int64], f"values.dtype: {values.dtype}"
+        if values.dtype in [int, np.int8, np.int16, np.int32, np.int64]:
             self.values = {int(x): i for i, x in enumerate(np.sort(values))}
         else:
             self.values = {x: i for i, x in enumerate(np.sort(values))}
