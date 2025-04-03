@@ -1,6 +1,7 @@
-import re
+import re, io, base64, gzip
 import pandas as pd
 import numpy as np
+import polars as pl
 from joblib import Parallel, delayed
 from functools import partial
 
@@ -12,6 +13,8 @@ __all__ = [
     "parallel_apply",
     "astype_faster",
     "query",
+    "encode_dataframe_to_zip_base64",
+    "decode_dataframe_from_zip_base64",
 ]
 
 
@@ -135,3 +138,32 @@ def query(df: pd.DataFrame, str_where: str):
         elif x == "and": operator = 0
         elif x == "or":  operator = 1
     return ndf_bool
+
+def encode_dataframe_to_zip_base64(df: pd.DataFrame | pl.DataFrame | pd.Series | pl.Series) -> str:
+    assert isinstance(df, (pd.DataFrame, pl.DataFrame, pd.Series, pl.Series))
+    buffer    = io.BytesIO()
+    is_pandas = isinstance(df, (pd.DataFrame, pd.Series))
+    if is_pandas:
+        df.to_pickle(buffer)
+    else:
+        df.write_parquet(buffer, compression="zstd")
+    buffer.seek(0)
+    pickled_bytes = buffer.read()
+    if is_pandas:
+        pickled_bytes = gzip.compress(pickled_bytes)
+    encoded = str(int(is_pandas)) + base64.b64encode(pickled_bytes).decode('ascii')
+    return encoded
+
+def decode_dataframe_from_zip_base64(str_bytes: str) -> pd.DataFrame | pl.DataFrame | pd.Series | pl.Series:
+    assert isinstance(str_bytes, str)
+    is_pandas, str_bytes = bool(int(str_bytes[0])), str_bytes[1:]
+    pickled_bytes = base64.b64decode(str_bytes)
+    if is_pandas:
+        pickled_bytes = gzip.decompress(pickled_bytes)
+    buffer = io.BytesIO(pickled_bytes)
+    buffer.seek(0)
+    if is_pandas:
+        df = pd.read_pickle(buffer)
+    else:
+        df = pl.read_parquet(buffer)
+    return df
