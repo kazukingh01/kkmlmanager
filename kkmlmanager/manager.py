@@ -1086,7 +1086,7 @@ class ChainModel:
                 If use this, you can emmit to be used "prec_call" process.
                 You can use same input or add previouos prediction
         Usage::
-            add("./test.mlmanager.pickle", "test", "ndf")
+            add("./test.mlmanager.pickle", "test", input_string="ndf")
         """
         LOGGER.info("START")
         assert isinstance(mlmanager, MLManager)
@@ -1096,19 +1096,25 @@ class ChainModel:
         self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
         LOGGER.info("END")
 
-    def predict(self, input_x: np.ndarray | pd.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
+    def predict(self, input_x: np.ndarray | pd.DataFrame | pl.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
         LOGGER.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
-        if isinstance(input_x, pd.DataFrame):
+        assert isinstance(is_row, bool)
+        assert isinstance(is_exp, bool)
+        assert isinstance(is_ans, bool)
+        assert isinstance(is_normalize, bool) or is_normalize is None
+        if is_normalize is None:
+            is_normalize = self.is_normalize
+        if isinstance(input_x, (pd.DataFrame, pl.DataFrame)):
             input_x, _, _ = self.list_mlmanager[0].proc_call(input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         else:
             assert isinstance(input_x, np.ndarray)
         dict_output = {"ndf": input_x, "np": np, "pd": pd}
-        for _, dictwk in enumerate(self.list_mlmanager):
+        for dictwk in self.list_mlmanager:
             mlmanager: MLManager = dictwk["mlmanager"]
             model_name           = dictwk["name"]
             input_string         = dictwk["input_string"]
-            LOGGER.info(f"model: {model_name} predict.")
+            LOGGER.info(f"[model: {model_name}, input_string: {input_string}] predict ...")
             if input_string is None:
                 output, _, _ = mlmanager.predict(df=input_x, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
             else:
@@ -1121,7 +1127,6 @@ class ChainModel:
         except Exception as e:
             LOGGER.info(f"{dict_output}")
             LOGGER.raise_error(f"{e}")
-        if is_normalize is None: is_normalize = self.is_normalize
         if is_normalize:
             LOGGER.info("normalize output...")
             assert len(output.shape) == 2
