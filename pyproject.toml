@@ -1,10 +1,13 @@
 [project]
 name = "kkmlmanager"
-version = "1.3.8"
+version = "1.3.9"
 requires-python = ">= 3.12.0"
 description = "usefule library for ML (mainly for table data)."
 dependencies = [
-    'kkgbdt @ git+https://github.com/kazukingh01/kkgbdt.git@5c2515daae71d79179ee085680e34c57da40717d',
+    'kklogger @ git+https://github.com/kazukingh01/kklogger.git@f6ddcc099da0102a14a62d67bede1b1c30eaf839',
+    'pandas==2.2.3',
+    'numpy==2.2.1',
+    'optuna==4.1.0',
     'matplotlib==3.9.4',
     'polars==1.18.0',
     'pyarrow>=18.1.0',

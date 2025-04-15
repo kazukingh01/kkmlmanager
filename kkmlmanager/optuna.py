@@ -14,17 +14,20 @@ __all__ = [
 ]
 
 
-def create_study(func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None, prev_study_name: str=None, n_jobs: int=1, **kwargs):
+def create_study(
+    func, n_trials: int, storage: str=None, is_new: bool=True, name: str=None,
+    prev_study_name: str=None, n_jobs: int=1, **kwargs
+):
     """
     Params::
         storage: postgresql://postgres:postgres@127.0.0.1:5432/optuna
     Memo::
         How to create database for PostgreSQL. # Docker command
-        sudo docker exec --user=postgres postgres /usr/lib/postgresql/13/bin/dropdb optuna
-        sudo docker exec --user=postgres postgres /usr/lib/postgresql/13/bin/createdb --encoding=UTF8 --locale=ja_JP.utf8 --template=template0 optuna
+        sudo docker exec --user=postgres postgres dropdb optuna
+        sudo docker exec --user=postgres postgres createdb --encoding=UTF8 --locale=ja_JP.utf8 --template=template0 optuna
     """
     LOGGER.info("START")
-    assert isinstance(n_trials, int)
+    assert isinstance(n_trials, int) and n_trials > 0
     assert storage is None or isinstance(storage, str)
     assert isinstance(is_new, bool)
     name = f"study_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}" if name is None else name

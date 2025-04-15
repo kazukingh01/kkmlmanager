@@ -1,4 +1,5 @@
-import os, shutil, pickle
+import os, shutil, pickle, base64, importlib, datetime
+PICKLE_PROTOCOL = 5
 
 
 __all__ = [
@@ -85,3 +86,71 @@ def unmask_value_isin_object(value: object, map_list: list[object]) -> bool:
         if value in map_list:
             return True
     return False
+
+def encode_object(_o: object, mode: int=0, savedir: str=None) -> str:
+    """
+    mode:
+        0: base64 encoding
+        1: save to file
+        2: only class name (no save object)
+    """
+    assert isinstance(mode, int) and mode in [0, 1, 2]
+    assert isinstance(savedir, (str, type(None)))
+    if mode in [0, 1]:
+        if not isinstance(_o, type) and hasattr(_o, "dump_with_loader"):
+            output = _o.dump_with_loader()
+            assert isinstance(output, dict)
+            for x in ["__class__", "__loader__", "__dump_string__"]:
+                assert x in output and isinstance(output[x], str)
+        else:
+            output = base64.b64encode(pickle.dumps(_o, protocol=PICKLE_PROTOCOL)).decode('ascii')
+        if mode == 0:
+            return output
+        else:
+            assert savedir is not None
+            fname = datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + "." + _o.__class__.__name__ + ".base64.txt"
+            with open(os.path.join(savedir, fname), "w") as f:
+                if isinstance(output, dict):
+                    f.write(output["__dump_string__"])
+                    output["__dump_string__"] = fname
+                else:
+                    f.write(output)
+                    output = fname
+            return output
+    elif mode == 2:
+        return _o.__class__.__name__
+
+def decode_object(input_o: str | dict, basedir: str=None) -> object:
+    """
+    Usage::
+        >>> decode_object("12345678901234567890.base64.txt")
+        <object>
+        >>> decode_object({"__class__": "kkmlmanager.manager.Manager", "__loader__": "load", "__dump_string__": "12345678901234567890.base64.txt"})
+        <object>
+    """
+    assert isinstance(input_o, (str, dict))
+    if isinstance(input_o, dict):
+        # special loading
+        for x in ["__class__", "__loader__", "__dump_string__"]: assert x in input_o
+        _path, _cls = input_o["__class__"].rsplit(".", 1)
+        _cls = getattr(importlib.import_module(_path), _cls)
+        if len(input_o["__dump_string__"].split(".")[0]) == 20 and input_o["__dump_string__"].endswith(".base64.txt"):
+            assert basedir is not None and isinstance(basedir, str)
+            with open(os.path.join(basedir, input_o["__dump_string__"]), "r") as f:
+                str_object = f.read()
+        else:
+            str_object = input_o["__dump_string__"]
+        return getattr(_cls, input_o["__loader__"])(str_object)
+    else:
+        # general loading
+        if len(input_o.split(".")[0]) == 20 and input_o.endswith(".base64.txt"):
+            assert basedir is not None and isinstance(basedir, str)
+            with open(os.path.join(basedir, input_o), "r") as f:
+                str_object = f.read()
+            return pickle.loads(base64.b64decode(str_object))
+        else:
+            try:
+                return pickle.loads(base64.b64decode(input_o))
+            except Exception as e:
+                return input_o
+
