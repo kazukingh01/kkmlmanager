@@ -201,12 +201,10 @@ class MLManager:
                 ins.eval_test_se  = pd.Series(y)
             elif x == "eval_adversarial_se":
                 ins.eval_adversarial_se = pd.Series(y)
-            elif x == "columns_exp":
-                ins.columns_exp = np.array(y, dtype=object)
-            elif x == "columns_ans":
-                ins.columns_ans = np.array(y, dtype=object)
-            elif x == "columns_oth":
-                ins.columns_oth = np.array(y, dtype=object)
+            elif x == "columns":
+                ins.columns      = np.array(y, dtype=object)
+            elif x == "columns_hist":
+                ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
             elif re.match(r"^features_", x) is not None:
                 if y["mode"] != 2:
                     LOGGER.info(f"decode: {x}, it might be slow process...")
@@ -297,7 +295,7 @@ class MLManager:
         assert isinstance(features, (np.ndarray, list))
         if isinstance(features, list):
             assert check_type_list(features, str)
-            features = np.ndarray(features)
+            features = np.array(features, dtype=object)
         assert np.all(isin_compare_string(features, self.columns))
         self.columns_hist.append(self.columns.copy())
         self.columns = features.copy()
