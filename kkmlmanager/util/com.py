@@ -87,7 +87,7 @@ def unmask_value_isin_object(value: object, map_list: list[object]) -> bool:
             return True
     return False
 
-def encode_object(_o: object, mode: int=0, savedir: str=None) -> str:
+def encode_object(_o: object, mode: int=0, savedir: str=None, func_encode=None) -> str:
     """
     mode:
         0: base64 encoding
@@ -97,7 +97,10 @@ def encode_object(_o: object, mode: int=0, savedir: str=None) -> str:
     assert isinstance(mode, int) and mode in [0, 1, 2]
     assert isinstance(savedir, (str, type(None)))
     if mode in [0, 1]:
-        if not isinstance(_o, type) and hasattr(_o, "dump_with_loader"):
+        if func_encode is not None:
+            output = func_encode(_o)
+            assert isinstance(output, str)
+        elif not isinstance(_o, type) and hasattr(_o, "dump_with_loader"):
             output = _o.dump_with_loader()
             assert isinstance(output, dict)
             for x in ["__class__", "__loader__", "__dump_string__"]:
@@ -120,14 +123,7 @@ def encode_object(_o: object, mode: int=0, savedir: str=None) -> str:
     elif mode == 2:
         return _o.__class__.__name__
 
-def decode_object(input_o: str | dict, basedir: str=None) -> object:
-    """
-    Usage::
-        >>> decode_object("12345678901234567890.base64.txt")
-        <object>
-        >>> decode_object({"__class__": "kkmlmanager.manager.Manager", "__loader__": "load", "__dump_string__": "12345678901234567890.base64.txt"})
-        <object>
-    """
+def decode_object(input_o: str | dict, basedir: str=None, func_decode=None) -> object:
     assert isinstance(input_o, (str, dict))
     if isinstance(input_o, dict):
         # special loading
@@ -143,14 +139,15 @@ def decode_object(input_o: str | dict, basedir: str=None) -> object:
         return getattr(_cls, input_o["__loader__"])(str_object)
     else:
         # general loading
+        func = func_decode if func_decode is not None else lambda x: pickle.loads(base64.b64decode(x))
         if len(input_o.split(".")[0]) == 20 and input_o.endswith(".base64.txt"):
             assert basedir is not None and isinstance(basedir, str)
             with open(os.path.join(basedir, input_o), "r") as f:
                 str_object = f.read()
-            return pickle.loads(base64.b64decode(str_object))
+            return func(str_object)
         else:
             try:
-                return pickle.loads(base64.b64decode(input_o))
+                return func(input_o)
             except Exception as e:
                 return input_o
 

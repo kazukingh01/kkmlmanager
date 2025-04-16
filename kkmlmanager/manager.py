@@ -127,17 +127,9 @@ class MLManager:
                 dictwk[x] = getattr(self, x).to_dict()
         for x in dir(self): # separating to avoid long text goes head
             if re.match(r"^features_", x) is not None:
-                if mode == 2:
-                    dictwk[x] = {
-                        "mode": mode,
-                        "data": encode_object(getattr(self, x), mode=mode, savedir=None),
-                    }
-                else:
+                if mode != 2:
                     LOGGER.info(f"encode: {x}, it might be slow process...")
-                    dictwk[x] = {
-                        "mode": mode,
-                        "data": encode_dataframe_to_zip_base64(getattr(self, x)),
-                    }
+                dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir, func_encode=encode_dataframe_to_zip_base64)
         dictwk["model"] = encode_object(self.model, mode=mode, savedir=savedir) if self.model is not None else None # long text goes last
         for x in dir(self):
             if re.match(r"^model_cv[0-9]+$", x) is not None:
@@ -206,9 +198,7 @@ class MLManager:
             elif x == "columns_hist":
                 ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
             elif re.match(r"^features_", x) is not None:
-                if y["mode"] != 2:
-                    LOGGER.info(f"decode: {x}, it might be slow process...")
-                    setattr(ins, x, decode_dataframe_from_zip_base64(y["data"]))
+                setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
             elif re.match(r"^eval_valid_se_cv", x) is not None:
                 setattr(ins, x, pd.Series(y))
             elif re.match(r"^model_cv[0-9]+$", x) is not None:
@@ -343,8 +333,7 @@ class MLManager:
         assert sample_size is None or (isinstance(sample_size, int) and 0 < sample_size)
         assert dtype     in ["float16", "float32", "float64"]
         assert corr_type in ["pearson", "spearman"]
-        if sample_size is None and df is not None:
-            sample_size = df.shape[0]
+        sample_size = df.shape[0] if sample_size is None and df is not None else sample_size
         if df is not None:
             assert sample_size <= df.shape[0]
             idx = np.random.permutation(np.arange(df.shape[0]))[:sample_size]
@@ -643,6 +632,7 @@ class MLManager:
             self.logger.info("cv models without calibration.")
             self.model_multi = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
         self.is_cvmodel = True
+        self.logger.info(self.model_multi.to_json(mode=2, indent=4))
         self.logger.info("END")
     
     def get_model_mode(self):
@@ -1054,7 +1044,7 @@ class MLManager:
             f.write(self.logger.internal_stream.getvalue())
 
     def save(
-        self, dirpath: str=None, filename: str=None, is_remake: bool=False, is_minimum: bool=False, 
+        self, dirpath: str=f"__tmp__", filename: str=None, is_remake: bool=False, is_minimum: bool=False, 
         is_json: bool=False, mode: int=0, encoding: str="utf8"
     ):
         self.logger.info("START")
@@ -1124,9 +1114,11 @@ class ChainModel:
             name:
                 This name is used to identify which model's answer is.
             input_string:
-                This is used to organize input features.
-                If use this, you can emmit to be used "prec_call" process.
-                You can use same input or add previouos prediction
+                This is used to cotrol input features.
+                If use this, you can emmit to be used "prec_call" process in MLManager.
+                You can use same input or add previous prediction.
+                ::
+                    input_string="ndf" -> use same input.
         Usage::
             add("./test.mlmanager.pickle", "test", input_string="ndf")
         """
@@ -1138,15 +1130,17 @@ class ChainModel:
         self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
         LOGGER.info("END")
 
-    def predict(self, input_x: np.ndarray | pd.DataFrame | pl.DataFrame, is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs):
+    def predict(
+        self, input_x: np.ndarray | pd.DataFrame | pl.DataFrame,
+        is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs
+    ):
         LOGGER.info(f"START {self.__class__}")
         assert len(self.list_mlmanager) > 0
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
         assert isinstance(is_normalize, bool) or is_normalize is None
-        if is_normalize is None:
-            is_normalize = self.is_normalize
+        is_normalize = self.is_normalize if is_normalize is None else is_normalize
         if isinstance(input_x, (pd.DataFrame, pl.DataFrame)):
             input_x, _, _ = self.list_mlmanager[0].proc_call(input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         else:
