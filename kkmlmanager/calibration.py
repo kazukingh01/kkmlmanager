@@ -1,7 +1,8 @@
 import copy, tqdm
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import softmax
 from functools import partial
-from sklearn.calibration import calibration_curve
 from sklearn.calibration import label_binarize
 from sklearn.isotonic import IsotonicRegression
 import matplotlib.pyplot as plt
@@ -15,12 +16,28 @@ LOGGER = set_logger(__name__)
 
 __all__ = [
     "IsotonicRegressionWithError",
+    "MultiLabelRegressionWithError",
+    "TemperatureScaling",
     "calibration_curve_plot",
+    "expected_calibration_error",
 ]
 
 
-class IsotonicRegressionWithError:
+class BaseCalibrator:
+    def __init__(self):
+        pass
+    def __str__(self):
+        raise NotImplementedError()
+    def to_dict(self) -> dict:
+        raise NotImplementedError()
+    @classmethod
+    def from_dict(cls):
+        raise NotImplementedError()
+
+
+class IsotonicRegressionWithError(BaseCalibrator):
     def __init__(self, y_min: float | None=None, y_max: float | None=None, increasing: bool=True, set_first_score: bool=False):
+        LOGGER.info("START")
         assert isinstance(y_min, (float, type(None)))
         assert isinstance(y_max, (float, type(None)))
         assert isinstance(increasing, bool)
@@ -36,54 +53,57 @@ class IsotonicRegressionWithError:
         self.map_x     = np.array([], dtype=float)
         self.map_n_bin = np.array([], dtype=float)
         self.map_err   = np.array([], dtype=float)
+        super().__init__()
+        LOGGER.info("END")
     def __str__(self):
         return f"{self.__class__.__name__}(model={self.model}, map_x={self.map_x[:3]} ..., map_n_bin={self.map_n_bin[:3]} ..., map_err={self.map_err[:3]} ..., set_first_score={self.set_first_score})"
     def __repr__(self):
         return self.__str__()
-    def fit(self, X: np.ndarray, Y: np.ndarray, n_bootstrap: int=100):
+    def fit(self, probs: np.ndarray, labels: np.ndarray, n_bootstrap: int=100):
         LOGGER.info("START")
-        assert isinstance(X, np.ndarray) and len(X.shape) == 1
-        assert isinstance(Y, np.ndarray) and len(Y.shape) == 1
-        assert X.shape == Y.shape
-        assert Y.dtype in [int, np.int8, np.int16, np.int32, np.int64]
-        assert Y.max() == 1 and Y.min() == 0
+        assert isinstance(probs, np.ndarray) and len(probs.shape) == 1
+        assert isinstance(labels, np.ndarray) and len(labels.shape) == 1
+        assert probs.shape == labels.shape
+        assert labels.dtype in [int, np.int8, np.int16, np.int32, np.int64]
+        assert labels.max() == 1 and labels.min() == 0
         if   self.set_first_score and self.model.increasing:
-            self.model.y_min = X.min()
+            self.model.y_min = probs.min()
         elif self.set_first_score and not self.model.increasing:
-            self.model.y_max = X.max()
+            self.model.y_max = probs.max()
         model_base = copy.deepcopy(self.model)
-        self.model.fit(X, Y)
+        self.model.fit(probs, labels)
         self.map_x     = np.array([self.model.X_thresholds_[0] / 2.0] + ((self.model.X_thresholds_[:-1] + self.model.X_thresholds_[1:]) / 2.0).tolist() + [self.model.X_thresholds_[-1] * 2.0])
-        self.map_n_bin = np.histogram2d(X, Y, bins=[self.map_x, [-0.5,0.5,1.5]])[0]
+        self.map_n_bin = np.histogram2d(probs, labels, bins=[self.map_x, [-0.5,0.5,1.5]])[0]
         # bootstrap sampling
         ndf_idx = np.random.randint(0, X.shape[0], (n_bootstrap, X.shape[0]))
         ndf_val = []
         for ndfwk in tqdm.tqdm(ndf_idx):
-            model = copy.deepcopy(model_base).fit(X[ndfwk], Y[ndfwk])
+            model = copy.deepcopy(model_base).fit(probs[ndfwk], labels[ndfwk])
             ndf_val.append(model.predict(self.map_x))
         self.map_err = np.array(ndf_val).std(axis=0)
         LOGGER.info("END")
         return self
-    def predict(self, X: np.ndarray):
+    def predict(self, probs: list[int | float] | np.ndarray) -> NdarrayWithErr:
         LOGGER.info("START")
-        assert isinstance(X, (list, np.ndarray))
-        if isinstance(X, np.ndarray):
-            assert len(X.shape) == 1
+        assert isinstance(probs, (list, np.ndarray))
+        if isinstance(probs, np.ndarray):
+            assert len(probs.shape) == 1
         else:
-            assert isinstance(X, list)
-        val = self.model.predict(X)
-        err = self.map_err[np.digitize(X, self.model.X_thresholds_)]
+            assert isinstance(probs, list)
+        val = self.model.predict(probs)
+        err = self.map_err[np.digitize(probs, self.model.X_thresholds_)]
         LOGGER.info("END")
         return NdarrayWithErr(val, err)
 
 
-class MultiLabelRegressionWithError:
+class MultiLabelRegressionWithError(BaseCalibrator):
     def __init__(self, increasing: bool=True, set_first_score: bool=True):
         LOGGER.info("START")
         assert isinstance(increasing, bool)
         assert isinstance(set_first_score, bool)
         self.basemodel = partial(IsotonicRegressionWithError, increasing=increasing, set_first_score=set_first_score)
         self.list_models: list[IsotonicRegressionWithError] = []
+        super().__init__()
         LOGGER.info("END")
     def __str__(self):
         return f"{self.__class__.__name__}(basemodel={self.basemodel}, list_models={len(self.list_models)})"
@@ -101,54 +121,133 @@ class MultiLabelRegressionWithError:
         ins = cls(increasing=dict_model["increasing"], set_first_score=dict_model["set_first_score"])
         ins.list_models = [decode_object(x) for x in dict_model["list_models"]]
         return ins
-    def fit(self, input_x: np.ndarray, input_y: np.ndarray, is_reg: bool=False, n_bootstrap: int=100):
+    def fit(self, probs: np.ndarray, labels: np.ndarray, is_reg: bool=False, n_bootstrap: int=100):
         LOGGER.info("START")
-        assert isinstance(input_x, np.ndarray) and len(input_x.shape) in [1,2]
-        assert isinstance(input_y, np.ndarray) and len(input_y.shape) in [1,2]
-        assert input_x.shape[0] == input_y.shape[0]
+        assert isinstance(probs, np.ndarray) and len(probs.shape) in [1,2]
+        assert isinstance(labels, np.ndarray) and len(labels.shape) in [1,2]
+        assert probs.shape[0] == labels.shape[0]
         assert isinstance(is_reg, bool)
         if is_reg:
-            assert input_y.dtype in [np.float16, np.float32, np.float64, np.float128, float]
+            assert labels.dtype in [np.float16, np.float32, np.float64, np.float128, float]
         else:
-            assert input_y.dtype in [np.int8, np.int16, np.int32, np.int64, int, str, np.dtypes.StrDType]
+            assert labels.dtype in [np.int8, np.int16, np.int32, np.int64, int, str, np.dtypes.StrDType]
             """
             >>> label_binarize(['yes', 'no', 'no', 'yes'], classes=['no', 'yes'])
             array( [[1],
                     [0],
                     [0],
                     [1]])
-            >>> input_y = np.array([0,1,1])
-            >>> label_binarize(input_y, classes=np.sort(np.unique(input_y)))
+            >>> labels = np.array([0,1,1])
+            >>> label_binarize(labels, classes=np.sort(np.unique(labels)))
             array( [[0],
                     [1],
                     [1]])
-            >>> input_y = np.array([0,1,1,2])
-            >>> label_binarize(input_y, classes=np.sort(np.unique(input_y)))
+            >>> labels = np.array([0,1,1,2])
+            >>> label_binarize(labels, classes=np.sort(np.unique(labels)))
             array( [[1, 0, 0],
                     [0, 1, 0],
                     [0, 1, 0],
                     [0, 0, 1]])
             """
-            if input_x.shape != input_y.shape:
-                input_y = label_binarize(input_y, classes=np.sort(np.unique(input_y)))
-        assert input_x.shape == input_y.shape
-        if len(input_x.shape) == 1: input_x = input_x.reshape(-1, 1)
-        if len(input_y.shape) == 1: input_y = input_y.reshape(-1, 1)
-        for i, (_input_x, _input_y) in enumerate(zip(input_x.T, input_y.T)):
-            LOGGER.info(f"fitting ... {i + 1} / {input_y.shape[-1]}")
+            if probs.shape != labels.shape:
+                labels = label_binarize(labels, classes=np.sort(np.unique(labels)))
+        assert probs.shape == labels.shape
+        if len(probs.shape) == 1: probs = probs.reshape(-1, 1)
+        if len(labels.shape) == 1: labels = labels.reshape(-1, 1)
+        for i, (_probs, _labels) in enumerate(zip(probs.T, labels.T)):
+            LOGGER.info(f"fitting ... {i + 1} / {probs.shape[-1]}")
             self.list_models.append(self.basemodel())
-            self.list_models[-1].fit(_input_x, _input_y, n_bootstrap=n_bootstrap)
+            self.list_models[-1].fit(_probs, _labels, n_bootstrap=n_bootstrap)
         LOGGER.info("END")
         return self
-    def predict(self, input_x: np.ndarray) -> NdarrayWithErr:
+    def predict(self, probs: np.ndarray) -> NdarrayWithErr:
         LOGGER.info("START")
-        assert isinstance(input_x, np.ndarray) and len(input_x.shape) in [1,2]
-        if len(input_x.shape) == 1: input_x = input_x.reshape(-1, 1)
+        assert isinstance(probs, np.ndarray) and len(probs.shape) in [1,2]
+        if len(probs.shape) == 1: probs = probs.reshape(-1, 1)
         list_pred = []
-        for _input_x, model in zip(input_x.T, self.list_models):
-            list_pred.append(model.predict(_input_x))
+        for _probs, model in zip(probs.T, self.list_models):
+            list_pred.append(model.predict(_probs))
         LOGGER.info("END")
         return nperr_stack(list_pred, dtype=np.float64).T
+
+
+class TemperatureScaling(BaseCalibrator):
+    def __init__(self, T: int | float=1.0):
+        LOGGER.info("START")
+        assert isinstance(T, (int, float))
+        assert T > 0.0
+        self.T = float(T)
+        super().__init__()
+        LOGGER.info("END")
+    def __str__(self):
+        return f"{self.__class__.__name__}(T={self.T})"
+    def __repr__(self):
+        return self.__str__()
+    def to_dict(self) -> dict:
+        return {
+            "T": self.T
+        }
+    @classmethod
+    def from_dict(cls, dict_model: dict):
+        assert isinstance(dict_model, dict)
+        return cls.__init__(T=dict_model["T"])
+    def fit(self, input_x: np.ndarray, input_y: np.ndarray, axis: int=-1):
+        LOGGER.info("START")
+        assert isinstance(input_x, np.ndarray)
+        assert isinstance(input_y, np.ndarray)
+        assert len(input_x.shape) >= 2
+        assert len(input_y.shape) == 1
+        assert input_x.shape[0] == input_y.shape[0]
+        assert isinstance(axis, int)
+        logits = np.log(input_x + 1e-12)
+        res    = minimize(
+            fun=lambda x: self.nll_and_grad(x[0], logits=logits, labels=input_y, axis=axis),
+            x0=np.array([self.T]),
+            jac=True,
+            bounds=[(1e-6, None)],
+            method='L-BFGS-B',
+            options={'maxiter': 100}
+        )
+        LOGGER.info(f"T: init={self.T}, after={float(res.x[0])}")
+        self.T = float(res.x[0])
+        LOGGER.info("END")
+        return self
+    def predict(self, input_x: np.ndarray, axis: int=-1):
+        LOGGER.info("START")
+        assert isinstance(input_x, np.ndarray)
+        assert len(input_x.shape) >= 2
+        logits = np.log(input_x + 1e-12)
+        val    = self.temperature_scaling(logits, self.T, axis)
+        LOGGER.info("END")
+        return val
+    @classmethod
+    def temperature_scaling(cls, logits: np.ndarray, temperature: int | float=1.0, axis: int=-1):
+        assert isinstance(logits, np.ndarray)
+        assert len(logits.shape) >= 2
+        assert isinstance(temperature, (int, float)) and temperature > 0.0
+        assert isinstance(axis, int)
+        centered = logits - np.max(logits, axis=axis, keepdims=True)
+        scaled   = centered / temperature
+        return softmax(scaled, axis=axis)
+    @classmethod
+    def nll_and_grad(cls, temperature: float | int, logits: np.ndarray=None, labels: np.ndarray=None, axis: int=-1):
+        assert isinstance(temperature, (int, float)) and temperature > 0.0
+        assert isinstance(logits, np.ndarray)
+        assert isinstance(labels, np.ndarray)
+        assert len(logits.shape) >= 2
+        assert len(labels.shape) == 1
+        assert logits.shape[0] == labels.shape[0]
+        assert isinstance(axis, int)
+        T        = float(temperature)
+        centered = logits - np.max(logits, axis=axis, keepdims=True)
+        scaled   = centered / temperature
+        P        = softmax(scaled, axis=axis)
+        idx      = np.arange(len(labels))
+        nll      = -np.sum(np.log(P[idx, labels]))
+        E_z      = np.sum(P * centered, axis=1)
+        z_true   = centered[idx, labels]
+        grad     = np.sum((E_z - z_true) / (T**2))
+        return nll, np.array([grad])
 
 
 def calib_with_error(prob: np.ndarray, target: np.ndarray, n_bins: int=10):
@@ -208,3 +307,32 @@ def calibration_curve_plot(prob_pre: np.ndarray, prob_aft: np.ndarray, target: n
         dict_fig[f"fig_{i_class}"] = fig
     LOGGER.info("END")
     return dict_fig
+
+
+def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, n_bins: int = 10) -> float:
+    assert isinstance(probs,  np.ndarray)
+    assert isinstance(labels, np.ndarray)
+    assert probs.shape[0] == labels.shape[0]
+    assert probs.ndim in [1, 2]
+    assert labels.ndim == 1
+    assert probs.dtype  in [np.float16, np.float32, np.float64, np.float128, float]
+    assert labels.dtype in [np.int8, np.int16, np.int32, np.int64, int, bool, np.bool_]
+    assert isinstance(n_bins, int) and n_bins >= 1
+    if probs.ndim > 1:
+        confidences = np.max(probs, axis=-1)
+        predictions = np.argmax(probs, axis=-1)
+    else:
+        confidences = probs
+        predictions = (probs >= 0.5).astype(int)
+    N = labels.shape[0]
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        mask = (confidences > bin_edges[i]) & (confidences <= bin_edges[i+1])
+        bin_size = np.sum(mask)
+        if bin_size == 0:
+            continue
+        avg_conf = np.mean(confidences[mask])
+        acc = np.mean(predictions[mask] == labels[mask])
+        ece += (bin_size / N) * np.abs(acc - avg_conf)
+    return ece

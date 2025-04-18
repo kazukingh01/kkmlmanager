@@ -108,7 +108,7 @@ if __name__ == "__main__":
             "categorical_features": np.where([x.startswith("Soil_Type_") for x in manager.columns])[0].tolist(),
         },
     )
-    manager.set_cvmodel()
+    manager.set_post_model(is_cv=True)
     output, input_y, input_index = manager.predict(df_test, is_row=False, is_exp=True, is_ans=False)
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
     print(manager.to_json(indent=4, mode=2))

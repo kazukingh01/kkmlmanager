@@ -62,7 +62,7 @@ if __name__ == '__main__':
             "x_valid": "_validation_x", "y_valid": "_validation_y", "group_train": "_train_group", "group_valid": "_valid_group" 
         }, dict_extra_cols={"race_id": "group"}
     )
-    manager.set_cvmodel()
+    manager.set_post_model(is_cv=True)
     output, input_y, input_index = manager.predict(df_test, is_row=False, is_exp=True, is_ans=False)
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
     print(manager.to_json(indent=4, mode=2))

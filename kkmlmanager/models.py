@@ -4,7 +4,7 @@ import numpy as np
 from kklogger import set_logger
 
 # local package
-from .calibration import MultiLabelRegressionWithError, calibration_curve_plot
+from .calibration import MultiLabelRegressionWithError, calibration_curve_plot, TemperatureScaling, BaseCalibrator, expected_calibration_error
 from .util.com import check_type_list, encode_object, decode_object
 from .util.numpy import NdarrayWithErr, nperr_stack
 LOGGER = set_logger(__name__)

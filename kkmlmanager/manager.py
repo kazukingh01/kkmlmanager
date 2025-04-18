@@ -4,6 +4,7 @@ import pandas as pd
 import polars as pl
 from sklearn.model_selection import StratifiedKFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+from kklogger import set_logger
 
 # local package
 from .regproc import RegistryProc
@@ -14,7 +15,6 @@ from .procs import mask_values_for_json, unmask_values_for_json
 from .util.numpy import isin_compare_string
 from .util.dataframe import encode_dataframe_to_zip_base64, decode_dataframe_from_zip_base64
 from .util.com import check_type_list, correct_dirpath, makedirs, unmask_values, unmask_value_isin_object, PICKLE_PROTOCOL, encode_object, decode_object
-from kklogger import set_logger
 LOGGER = set_logger(__name__)
 
 
@@ -66,12 +66,10 @@ class MLManager:
         self.model_class  = None
         self.model_args   = None
         self.model_kwargs = None
-        self.model_multi: MultiModel | Calibrator = None
-        self.model_calib: Calibrator = None
+        self.model_post: MultiModel | Calibrator = None
         self.model_func   = None
-        self.is_cvmodel   = False
         self.is_fit       = False
-        self.is_calib     = False
+        self.is_postmodel = False
         self.list_cv      = []
         self.columns_hist = [self.columns_exp.copy(), ]
         self.columns      = self.columns_exp.copy()
@@ -98,13 +96,11 @@ class MLManager:
             } if self.model_class is not None else None,
             "model_args":    [mask_values_for_json(x) for x in self.model_args] if hasattr(self, "model_args") and self.model_args is not None else None,
             "model_kwargs":  {k: mask_values_for_json(v) for k, v in self.model_kwargs.items()} if hasattr(self, "model_kwargs") and self.model_kwargs is not None else None,
-            "model_multi":   self.model_multi.to_dict(mode=mode, savedir=savedir) if self.model_multi is not None else None,
-            "model_calib":   self.model_calib.to_dict(mode=mode, savedir=savedir) if self.model_calib is not None else None,
+            "model_post":    self.model_post.to_dict(mode=mode, savedir=savedir) if self.model_post is not None else None,
             "model_func":    self.model_func,
             "list_cv":       self.list_cv,
-            "is_cvmodel":    self.is_cvmodel,
             "is_fit":        self.is_fit,
-            "is_calib":      self.is_calib,
+            "is_postmodel":  self.is_postmodel,
             "is_reg":        self.is_reg,
             "random_seed":   self.random_seed,
             "n_jobs":        self.n_jobs,
@@ -165,20 +161,11 @@ class MLManager:
                 ins.model_args = tuple([unmask_values_for_json(y[i]) for i in range(len(y))]) if y is not None else None
             elif x == "model_kwargs":
                 ins.model_kwargs = {k: unmask_values_for_json(v) for k, v in y.items()} if y is not None else None
-            elif x == "model_multi":
+            elif x == "model_post":
                 if y is not None:
                     _path, _cls = y["__BaseModel__"].rsplit(".", 1)
                     _cls = getattr(importlib.import_module(_path), _cls)
-                    ins.model_multi = _cls.from_dict(y, basedir=basedir)
-                else:
-                    ins.model_multi = None
-            elif x == "model_calib":
-                if y is not None:
-                    _path, _cls = y["__BaseModel__"].rsplit(".", 1)
-                    _cls = getattr(importlib.import_module(_path), _cls)
-                    ins.model_calib = _cls.from_dict(y, basedir=basedir)
-                else:
-                    ins.model_calib = None
+                    ins.model_post = _cls.from_dict(y, basedir=basedir)
             elif x == "proc_row":
                 ins.proc_row = RegistryProc.from_dict(y)
             elif x == "proc_exp":
@@ -198,7 +185,11 @@ class MLManager:
             elif x == "columns_hist":
                 ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
             elif re.match(r"^features_", x) is not None:
-                setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
+                try:
+                    setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
+                except Exception as e:
+                    LOGGER.warning(f"failed to decode {x}: {e}")
+                    setattr(ins, x, None)
             elif re.match(r"^eval_valid_se_cv", x) is not None:
                 setattr(ins, x, pd.Series(y))
             elif re.match(r"^model_cv[0-9]+$", x) is not None:
@@ -228,9 +219,8 @@ class MLManager:
             ins.model_args   = copy.deepcopy(self.model_args)
             ins.model_kwargs = copy.deepcopy(self.model_kwargs)
             ins.model_func   = copy.deepcopy(self.model_func)
-            ins.is_cvmodel   = self.is_cvmodel
             ins.is_fit       = self.is_fit
-            ins.is_calib     = self.is_calib
+            ins.is_postmodel = self.is_postmodel
             ins.columns_hist = copy.deepcopy(self.columns_hist)
             ins.columns      = self.columns.copy()
             ins.proc_row     = copy.deepcopy(self.proc_row)
@@ -238,19 +228,14 @@ class MLManager:
             ins.proc_ans     = copy.deepcopy(self.proc_ans)
             ins.list_cv      = copy.deepcopy(self.list_cv)
             model_mode       = self.get_model_mode()
-            if   model_mode == "model_multi":
-                ins.model       = None
-                ins.model_multi = copy.deepcopy(self.model_multi)
-                ins.model_calib = None
-            elif model_mode == "calibrater":
-                ins.model       = None
-                ins.model_multi = None
-                ins.model_calib = copy.deepcopy(self.model_calib)
+            if   model_mode == "model_post":
+                ins.model      = None
+                ins.model_post = copy.deepcopy(self.model_post)
             else:
                 if hasattr(self.model, "copy"):
-                    ins.model   = self.model.copy()
+                    ins.model  = self.model.copy()
                 else:
-                    ins.model   = copy.deepcopy(self.model)
+                    ins.model  = copy.deepcopy(self.model)
             return ins
         else:
             return copy.deepcopy(self)
@@ -272,12 +257,10 @@ class MLManager:
     
     def reset_model(self):
         self.logger.info("START")
-        self.model       = self.model_class(*self.model_args, **self.model_kwargs)
-        self.model_multi = None
-        self.model_calib = None
-        self.is_cvmodel  = False
-        self.is_fit      = False
-        self.is_calib    = False
+        self.model        = self.model_class(*self.model_args, **self.model_kwargs)
+        self.model_post   = None
+        self.is_fit       = False
+        self.is_postmodel = False
         self.logger.info("END")
 
     def update_features(self, features: list[str] | np.ndarray):
@@ -592,10 +575,20 @@ class MLManager:
         self.logger.info("END")
         return output, input_y, input_index
     
-    def set_cvmodel(self, is_calib: bool=False, is_calib_after_cv: bool=False, list_cv: list[int]=None, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=None):
+    def set_post_model(
+        self, is_cv: bool=False, is_calib: bool=False, is_calib_after_cv: bool=False, list_cv: list[int]=None, 
+        is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame=None
+    ):
         self.logger.info("START")
+        self.logger.info(
+            f"is_cv={is_cv}, is_calib={is_calib}, is_calib_after_cv={is_calib_after_cv}, list_cv={list_cv}, " + 
+            f"is_normalize={is_normalize}, is_binary_fit={is_binary_fit}, n_bins={n_bins}, df_calib={df_calib}"
+        )
+        assert isinstance(is_cv, bool)
         assert isinstance(is_calib, bool)
+        assert not (is_cv == False and is_calib == False)
         assert isinstance(is_calib_after_cv, bool)
+        assert not (is_calib_after_cv and (is_cv == False or is_calib == False))
         assert isinstance(is_normalize, bool)
         assert isinstance(is_binary_fit, bool)
         assert not (is_calib == False and is_calib_after_cv == True)
@@ -607,39 +600,49 @@ class MLManager:
         assert n_bins is None or isinstance(n_bins, int)
         if not (is_calib == True and is_calib_after_cv == True): assert n_bins is None
         if list_cv is None: list_cv = self.list_cv
-        if is_calib:
-            assert self.is_calib == False
+        for x in list_cv: assert hasattr(self, f"model_cv{x}")
+        assert isinstance(df_calib, (pd.DataFrame, pl.DataFrame, type(None)))
+        if is_cv:
             if is_calib_after_cv:
-                self.logger.info("calibrate after cv models.")
-                self.model_multi = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
-                valid_df = pd.concat([getattr(self, f"eval_valid_df_cv{x}") for x in list_cv], axis=0, ignore_index=True)
-                input_x  = valid_df.loc[:, valid_df.columns.str.contains("^predict_proba_", regex=True)].values
-                input_y  = valid_df["answer"].values.astype(int)
-                if n_bins is None: n_bins=50
-                self.calibration(
-                    df=None, input_x=input_x, input_y=input_y, model=self.model_multi, model_func=self.model_func,
-                    is_use_valid=False, is_predict=False, is_normalize=is_normalize, is_binary_fit=is_binary_fit, n_bins=n_bins
-                )
-                self.model_multi = self.model_calib
+                modelcv = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
+                if is_calib:
+                    assert df_calib is not None
+                    modelcalib = Calibrator(modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
+                    input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
+                    modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
+                    self.model_post = modelcalib
+                else:
+                    self.model_post = modelcv
             else:
-                self.logger.info("calibrate each cv models.")
-                if is_binary_fit: self.logger.warning(f"This parameter is not valid for this mode. is_binary_fit: {is_binary_fit}")
-                for x in list_cv:
-                    if not hasattr(self, f"model_cv{x}_calib"):
-                        self.logger.raise_error(f"Please run 'calibration_cv_model' first.")
-                self.model_multi = MultiModel([getattr(self, f"model_cv{x}_calib") for x in list_cv], func_predict=self.model_func)
+                if is_calib:
+                    models = []
+                    for x in list_cv:
+                        self.logger.info(f"calibration for {x} ...")
+                        modelcalib = Calibrator(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
+                        df         = getattr(self, f"eval_valid_df_cv{x}").copy()
+                        input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
+                        input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)
+                        if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
+                            input_x = input_x[:, -1:] # If it's binary classification.
+                        modelcalib.fit(input_x, input_y, is_input_prob=True, n_bins=n_bins)
+                        models.append(modelcalib)
+                    self.model_post = MultiModel(models, func_predict=self.model_func)
+                else:
+                    self.model_post = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
         else:
-            self.logger.info("cv models without calibration.")
-            self.model_multi = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
-        self.is_cvmodel = True
-        self.logger.info(self.model_multi.to_json(mode=2, indent=4))
+            if is_calib:
+                assert df_calib is not None
+                modelcalib = Calibrator(self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
+                input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
+                modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
+                self.model_post = modelcalib
+        self.is_postmodel = True
+        self.logger.info(self.model_post.to_json(mode=2, indent=4))
         self.logger.info("END")
-    
+
     def get_model_mode(self):
-        if self.is_cvmodel:
-            model_mode = "model_multi"
-        elif self.is_calib:
-            model_mode = "model_calib"
+        if self.is_postmodel:
+            model_mode = "model_post"
         else:
             model_mode = "model"
         return model_mode
@@ -921,87 +924,12 @@ class MLManager:
             self.fit(df_train, df_valid=df_valid, is_proc_fit=True, is_eval_train=True)
         else:
             self.fit_cross_validation(df_train, n_split=ncv, n_cv=ncv, is_proc_fit_every_cv=True, is_save_cv_models=True)
-            self.set_cvmodel()
+            self.set_post_model(is_cv=True)
         # test evaluation
         if df_test is not None:
             self.evaluate(df_test, is_store=True)
         self.logger.info("END")
-
-    def calibration(
-        self, df: pd.DataFrame=None, input_x: np.ndarray=None, input_y: np.ndarray=None, model=None, model_func: str=None,
-        is_use_valid: bool=False, is_predict: bool=False, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10
-    ):
-        """
-        None::
-            If is_predict == False:
-                input_x: it must be probabilities for calibration.
-                input_y: it must be answer.
-            If is_predict == True:
-                df: it must be features.
-                   or 
-                input_x: it must be features.
-                input_y: it must be answer.
-        """
-        self.logger.info("START")
-        assert not self.is_reg
-        assert self.is_fit
-        assert self.is_cvmodel == False
-        assert isinstance(is_use_valid,  bool)
-        assert isinstance(is_predict,    bool)
-        assert isinstance(is_normalize,  bool)
-        assert isinstance(is_binary_fit, bool)
-        if model      is None: model      = self.model
-        if model_func is None: model_func = self.model_func
-        if is_use_valid:
-            assert is_predict == False
-            assert df is None and input_x is None and input_y is None
-            assert hasattr(self, "eval_valid_df") and isinstance(self.eval_valid_df, pd.DataFrame) and self.eval_valid_df.shape[0] > 0
-            input_x = self.eval_valid_df.loc[:, self.eval_valid_df.columns.str.contains("^predict_proba_", regex=True)].values
-            input_y = self.eval_valid_df["answer"].values.astype(int)
-        if is_predict:
-            if isinstance(df, pd.DataFrame):
-                assert input_x is None
-                assert input_y is None
-                input_x, input_y, _ = self.predict(df=df, input_x=None, is_row=True, is_exp=True, is_ans=True)
-            else:
-                assert df is None
-                assert isinstance(input_x, np.ndarray)
-                assert isinstance(input_y, np.ndarray)
-                assert input_x.shape[0] == input_y.shape[0]
-                input_x, _, _ = self.predict(df=None, input_x=input_x, is_row=True, is_exp=True, is_ans=True)
-        else:
-            assert df is None
-        assert isinstance(input_x, np.ndarray)
-        assert isinstance(input_y, np.ndarray)
-        assert input_x.shape[0] == input_y.shape[0]
-        if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
-            input_x = input_x[:, -1:] # If it's binary classification.
-        self.model_calib = Calibrator(model, model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
-        self.logger.info("calibration start...")
-        self.model_calib.fit(input_x, input_y, n_bins=n_bins)
-        self.logger.info("calibration end...")
-        self.is_calib = True
-        self.logger.info("END")
     
-    def calibration_cv_model(self, is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=10):
-        self.logger.info("START")
-        assert isinstance(is_normalize,  bool)
-        assert isinstance(is_binary_fit, bool)
-        assert not self.is_reg
-        assert self.is_fit
-        assert len(self.list_cv) > 0
-        for x in self.list_cv:
-            self.logger.info(f"calibration for {x} ...")
-            calibrater = Calibrator(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
-            df         = getattr(self, f"eval_valid_df_cv{x}").copy()
-            input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
-            input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)
-            if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
-                input_x = input_x[:, -1:] # If it's binary classification.
-            calibrater.fit(input_x, input_y, n_bins=n_bins)
-            setattr(self, f"model_cv{x}_calib", calibrater)
-        self.logger.info("END")
-
     def evaluate(self, df_test: pd.DataFrame | pl.DataFrame, columns_ans: str | np.ndarray=None, is_store: bool=False, **kwargs):
         self.logger.info("START")
         assert isinstance(df_test, (pd.DataFrame, pl.DataFrame))
