@@ -37,8 +37,11 @@ class MLManager:
     ):
         self.logger = set_logger(f"{__class__.__name__}.{id(self)}", internal_log=True)
         self.logger.info("START")
+        assert isinstance(columns_exp, (list, np.ndarray))
+        assert isinstance(columns_ans, (list, np.ndarray, str))
+        assert isinstance(columns_oth, (list, np.ndarray, type(None)))
         if isinstance(columns_ans, str): columns_ans = [columns_ans, ]
-        if columns_oth is None: columns_oth = []
+        columns_oth = [] if columns_oth is None else columns_oth
         assert check_type_list(columns_exp, str)
         assert check_type_list(columns_ans, str)
         assert check_type_list(columns_oth, str)
@@ -90,6 +93,7 @@ class MLManager:
         self.logger.info("START")
         assert isinstance(mode, int) and mode in [0, 1, 2]
         dictwk = {
+            "__BaseModel__": "kkmlmanager.manager.MLManager",
             "model_class": {
                 "__name__":   self.model_class.__name__,
                 "__binary__": encode_object(self.model_class, mode=0, savedir=None),
@@ -336,7 +340,7 @@ class MLManager:
             except AttributeError:
                 self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.", exception=AttributeError())
         if cutoff is not None:
-            columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].values
+            columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].to_numpy(dtype=object)
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
             for x in columns_del:
                 sewk  = df_corr.loc[:, x].copy()
@@ -374,7 +378,7 @@ class MLManager:
                 self.logger.warning(f"features_treeimp is not found. Run '{sys._getframe().f_code.co_name}' first.")
                 self.logger.info("END")
                 return None
-        columns_sort = df_treeimp.index.values.copy()
+        columns_sort = df_treeimp.index.to_numpy(dtype=object).copy()
         self.columns = np.concatenate([columns_sort[isin_compare_string(columns_sort, self.columns)], self.columns[~isin_compare_string(self.columns, columns_sort)]])
         if cutoff is not None:
             columns_del = columns_sort[int(len(columns_sort) * cutoff):]
@@ -576,21 +580,22 @@ class MLManager:
         return output, input_y, input_index
     
     def set_post_model(
-        self, is_cv: bool=False, is_calib: bool=False, is_calib_after_cv: bool=False, list_cv: list[int]=None, 
-        is_normalize: bool=False, is_binary_fit: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame=None
-    ):
+        self, is_cv: bool=False, calibmodel: int | str=None, is_calib_after_cv: bool=False, list_cv: list[int]=None, 
+        is_normalize: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame=None
+    ) -> typing.Self:
         self.logger.info("START")
         self.logger.info(
-            f"is_cv={is_cv}, is_calib={is_calib}, is_calib_after_cv={is_calib_after_cv}, list_cv={list_cv}, " + 
-            f"is_normalize={is_normalize}, is_binary_fit={is_binary_fit}, n_bins={n_bins}, df_calib={df_calib}"
+            f"is_cv={is_cv}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, list_cv={list_cv}, " + 
+            f"is_normalize={is_normalize}, n_bins={n_bins}, df_calib={df_calib}"
         )
         assert isinstance(is_cv, bool)
+        assert isinstance(calibmodel, (int, type(None)))
+        is_calib = (calibmodel is not None)
         assert isinstance(is_calib, bool)
         assert not (is_cv == False and is_calib == False)
         assert isinstance(is_calib_after_cv, bool)
         assert not (is_calib_after_cv and (is_cv == False or is_calib == False))
         assert isinstance(is_normalize, bool)
-        assert isinstance(is_binary_fit, bool)
         assert not (is_calib == False and is_calib_after_cv == True)
         assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
         assert list_cv is None or check_type_list(list_cv, int)
@@ -598,7 +603,6 @@ class MLManager:
             list_cv = [str(x).zfill(len(self.list_cv[0])) for x in list_cv]
             assert sum([x in self.list_cv for x in list_cv]) == len(list_cv)
         assert n_bins is None or isinstance(n_bins, int)
-        if not (is_calib == True and is_calib_after_cv == True): assert n_bins is None
         if list_cv is None: list_cv = self.list_cv
         for x in list_cv: assert hasattr(self, f"model_cv{x}")
         assert isinstance(df_calib, (pd.DataFrame, pl.DataFrame, type(None)))
@@ -607,7 +611,7 @@ class MLManager:
                 modelcv = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
                 if is_calib:
                     assert df_calib is not None
-                    modelcalib = Calibrator(modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
+                    modelcalib = Calibrator(modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, calibmodel=calibmodel)
                     input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
                     modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
                     self.model_post = modelcalib
@@ -618,12 +622,12 @@ class MLManager:
                     models = []
                     for x in list_cv:
                         self.logger.info(f"calibration for {x} ...")
-                        modelcalib = Calibrator(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, is_binary_fit=is_binary_fit)
+                        modelcalib = Calibrator(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, calibmodel=calibmodel)
                         df         = getattr(self, f"eval_valid_df_cv{x}").copy()
-                        input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].values
-                        input_y    = df.loc[:, df.columns == "answer"].values.reshape(-1).astype(int)
-                        if len(input_x.shape) == 2 and input_x.shape[-1] == 2 and len(input_y.shape) == 1 and np.unique(input_y).shape[0] == 2:
-                            input_x = input_x[:, -1:] # If it's binary classification.
+                        input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].to_numpy(dtype=float)
+                        input_y    = df.loc[:, df.columns == "answer"].to_numpy().reshape(-1).astype(int)
+                        assert input_x.ndim == 2
+                        assert input_y.ndim == 1
                         modelcalib.fit(input_x, input_y, is_input_prob=True, n_bins=n_bins)
                         models.append(modelcalib)
                     self.model_post = MultiModel(models, func_predict=self.model_func)
@@ -632,13 +636,14 @@ class MLManager:
         else:
             if is_calib:
                 assert df_calib is not None
-                modelcalib = Calibrator(self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, is_binary_fit=is_binary_fit)
+                modelcalib = Calibrator(self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, calibmodel=calibmodel)
                 input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
                 modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
                 self.model_post = modelcalib
         self.is_postmodel = True
         self.logger.info(self.model_post.to_json(mode=2, indent=4))
         self.logger.info("END")
+        return self
 
     def get_model_mode(self):
         if self.is_postmodel:
@@ -1024,76 +1029,3 @@ class MLManager:
             manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
         LOGGER.info("END")
         return manager
-
-
-class ChainModel:
-    def __init__(self, output_string: str, is_normalize: bool=False):
-        assert isinstance(output_string, str)
-        assert isinstance(is_normalize, bool)
-        self.output_string  = output_string
-        self.is_normalize   = is_normalize
-        self.list_mlmanager: list[MLManager] = []
-
-    def add(self, mlmanager: MLManager, name: str, input_string: str=None):
-        """
-        Params::
-            mlmanager:
-                MLManager
-            name:
-                This name is used to identify which model's answer is.
-            input_string:
-                This is used to cotrol input features.
-                If use this, you can emmit to be used "prec_call" process in MLManager.
-                You can use same input or add previous prediction.
-                ::
-                    input_string="ndf" -> use same input.
-        Usage::
-            add("./test.mlmanager.pickle", "test", input_string="ndf")
-        """
-        LOGGER.info("START")
-        assert isinstance(mlmanager, MLManager)
-        assert isinstance(name, str)
-        assert input_string is None or isinstance(input_string, str)
-        LOGGER.info(f"add name: {name}, input_string: {input_string}")
-        self.list_mlmanager.append({"mlmanager": mlmanager, "name": name, "input_string": input_string})
-        LOGGER.info("END")
-
-    def predict(
-        self, input_x: np.ndarray | pd.DataFrame | pl.DataFrame,
-        is_row: bool=False, is_exp: bool=True, is_ans: bool=False, is_normalize: bool=None, **kwargs
-    ):
-        LOGGER.info(f"START {self.__class__}")
-        assert len(self.list_mlmanager) > 0
-        assert isinstance(is_row, bool)
-        assert isinstance(is_exp, bool)
-        assert isinstance(is_ans, bool)
-        assert isinstance(is_normalize, bool) or is_normalize is None
-        is_normalize = self.is_normalize if is_normalize is None else is_normalize
-        if isinstance(input_x, (pd.DataFrame, pl.DataFrame)):
-            input_x, _, _ = self.list_mlmanager[0].proc_call(input_x, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
-        else:
-            assert isinstance(input_x, np.ndarray)
-        dict_output = {"ndf": input_x, "np": np, "pd": pd}
-        for dictwk in self.list_mlmanager:
-            mlmanager: MLManager = dictwk["mlmanager"]
-            model_name           = dictwk["name"]
-            input_string         = dictwk["input_string"]
-            LOGGER.info(f"[model: {model_name}, input_string: {input_string}] predict ...")
-            if input_string is None:
-                output, _, _ = mlmanager.predict(df=input_x, input_x=None, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
-            else:
-                input        = eval(input_string, {}, dict_output)
-                output, _, _ = mlmanager.predict(df=None, input_x=input, is_row=is_row, is_exp=is_exp, is_ans=is_ans, **kwargs)
-            assert model_name not in dict_output
-            dict_output[model_name] = output.copy()
-        try:
-            output = eval(self.output_string, {}, dict_output)
-        except Exception as e:
-            LOGGER.info(f"{dict_output}")
-            LOGGER.raise_error(f"{e}")
-        if is_normalize:
-            LOGGER.info("normalize output...")
-            assert len(output.shape) == 2
-            output = output / output.sum(axis=-1).reshape(-1, 1)
-        LOGGER.info("END")
-        return output

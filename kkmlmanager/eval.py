@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, r2_score, log_loss
+from kklogger import set_logger
 
 # local package
-from kklogger import set_logger
+from .calibration import expected_calibration_error
 LOGGER = set_logger(__name__)
 
 
@@ -116,5 +117,10 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         weight = np.bincount(input_y_class, minlength=n_class)
         se["auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
         se["auc_all"]   = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
+        se["ece_025"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=0.25)
+        se["ece_050"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=0.50)
+        se["ece_100"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=1.00)
+        se["ece_200"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=2.00)
+        se["ece_400"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=4.00)
     LOGGER.info("END")
     return se, df

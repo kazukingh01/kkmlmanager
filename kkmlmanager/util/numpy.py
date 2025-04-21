@@ -144,6 +144,9 @@ class NdarrayWithErr:
     def size(self):
         return self.val.size
     @property
+    def ndim(self):
+        return self.val.ndim
+    @property
     def T(self):
         return __class__(self.val.T, self.err.T)
     def sum(self, *args, **kwargs):
@@ -188,13 +191,8 @@ class NdarrayWithErr:
         return self._minmax(*args, _proc="argmax", **kwargs)
     def reshape(self, *args, **kwargs):
         return __class__(self.val.reshape(*args, **kwargs), self.err.reshape(*args, **kwargs))
-    def to_numpy(self, axis_normalize: int | None=None):
-        if axis_normalize is None:
-            return self.val
-        else:
-            weight = 1.0 / np.clip(self.err / self.val, 1e-20, 1.0)
-            val    = (self.val / self.val.sum(axis=axis_normalize, keepdims=True)) * weight
-            return val / val.sum(axis=axis_normalize, keepdims=True)
+    def to_numpy(self):
+        return self.val
 
 def nperr_stack(list_ndferr: list[NdarrayWithErr], *args, **kwargs) -> NdarrayWithErr:
     val = np.stack([x.val for x in list_ndferr], *args, **kwargs)
