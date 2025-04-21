@@ -1027,5 +1027,9 @@ class MLManager:
                 with open(filepath + ".log", mode='r') as f:
                     manager.logger.internal_stream.write(f.read())
             manager.logger.info(f"load: {filepath}, jobs: {n_jobs}")
+        tmp = cls(manager.columns_exp.tolist(), manager.columns_ans.tolist())
+        for x in dir(tmp):
+            if not hasattr(manager, x):
+                setattr(manager, x, getattr(tmp, x)) # initialize
         LOGGER.info("END")
         return manager
