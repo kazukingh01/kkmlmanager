@@ -126,7 +126,7 @@ class MLManager:
             elif x in ["eval_adversarial_se"]:
                 dictwk[x] = getattr(self, x).to_dict()
         for x in dir(self): # separating to avoid long text goes head
-            if re.match(r"^features_", x) is not None:
+            if (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None):
                 if mode != 2:
                     LOGGER.info(f"encode: {x}, it might be slow process...")
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir, func_encode=encode_dataframe_to_zip_base64)
@@ -188,7 +188,7 @@ class MLManager:
                 ins.columns      = np.array(y, dtype=object)
             elif x == "columns_hist":
                 ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
-            elif re.match(r"^features_", x) is not None:
+            elif (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None):
                 try:
                     setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
                 except Exception as e:
