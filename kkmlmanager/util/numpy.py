@@ -1,14 +1,19 @@
+import typing
 import numpy as np
 from functools import partial
 from joblib import Parallel, delayed
+from sklearn.isotonic import isotonic_regression
 
 
 __all__ = [
     "isin_compare_string",
     "parallel_apply",
     "NdarrayWithErr",
-    "nperr_stack",
-    "nperr_concat",
+    "stack",
+    "concatenate",
+    "take_along_axis",
+    "isotonic_regression_with_err",
+    "normalize",
 ]
 
 
@@ -59,103 +64,103 @@ class NdarrayWithErr:
         assert val.shape == err.shape
         self.val = val
         self.err = err
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> typing.Self:
         return __class__(self.val[idx], self.err[idx])
-    def __add__(self, other):
+    def __add__(self, other) -> typing.Self:
         if isinstance(other, self.__class__):
             return __class__(self.val + other.val, np.sqrt(self.err ** 2 + other.err ** 2))
         else:
             return __class__(self.val + other, self.err)
-    def __radd__(self, other):
+    def __radd__(self, other) -> typing.Self:
         return self.__add__(other)
-    def __sub__(self, other):
+    def __sub__(self, other) -> typing.Self:
         if isinstance(other, self.__class__):
             return __class__(self.val - other.val, np.sqrt(self.err ** 2 + other.err ** 2))
         else:
             return __class__(self.val - other, self.err)
-    def __rsub__(self, other):
+    def __rsub__(self, other) -> typing.Self:
         return self.__sub__(other)
-    def __mul__(self, other):
+    def __mul__(self, other) -> typing.Self:
         if isinstance(other, self.__class__):
             return __class__(self.val * other.val, np.sqrt((other.val * self.err) ** 2 + (self.val * other.err) ** 2))
         else:
             return __class__(self.val * other, self.err * other)
-    def __rmul__(self, other):
+    def __rmul__(self, other) -> typing.Self:
         return self.__mul__(other)
-    def __truediv__(self, other):
+    def __truediv__(self, other) -> typing.Self:
         if isinstance(other, self.__class__):
             return __class__(self.val / other.val, np.sqrt((self.err / other.val) ** 2 + (other.err * self.val / (other.val ** 2)) ** 2))
         else:
             return __class__(self.val / other, self.err / other)
-    def __rtruediv__(self, other):
+    def __rtruediv__(self, other) -> typing.Self:
         if isinstance(other, self.__class__):
             return __class__(other.val / self.val, np.sqrt((other.err / self.val) ** 2 + (self.err * other.val / (self.val ** 2)) ** 2))
         else:
             return __class__(other / self.val, np.abs(other / (self.val ** 2)) * self.err)
-    def __pos__(self):
+    def __pos__(self) -> typing.Self:
         return self
-    def __neg__(self):
+    def __neg__(self) -> typing.Self:
         return __class__(-self.val, self.err)
-    def __abs__(self):
+    def __abs__(self) -> typing.Self:
         return __class__(np.abs(self.val), self.err)
-    def __eq__(self, other):
+    def __eq__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return (self.val == other.val) & (self.err == other.err)
         else:
             return (self.val == other)
-    def __ne__(self, other):
+    def __ne__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return (self.val != other.val) | (self.err != other.err)
         else:
             return (self.val != other)
-    def __gt__(self, other):
+    def __gt__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return self.val > other.val
         else:
             return self.val > other
-    def __ge__(self, other):
+    def __ge__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return self.val >= other.val
         else:
             return self.val >= other
-    def __lt__(self, other):
+    def __lt__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return self.val < other.val
         else:
             return self.val < other
-    def __le__(self, other):
+    def __le__(self, other) -> np.ndarray:
         if isinstance(other, self.__class__):
             return self.val <= other.val
         else:
             return self.val <= other
-    def __pow__(self, other: int | float):
+    def __pow__(self, other: int | float) -> typing.Self:
         if isinstance(other, self.__class__):
             raise ValueError("Cannot calculate statistical error.")
         else:
             return __class__(self.val ** other, np.abs(other * (self.val ** (other - 1))) * self.err)
-    def __str__(self):
+    def __str__(self) -> str:
         return f"val: {self.val.__str__()}, err: {self.err.__str__()}"
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"val: {self.val.__repr__()}, err: {self.err.__repr__()}"
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, ...]:
         return self.val.shape
     @property
-    def size(self):
+    def size(self) -> int:
         return self.val.size
     @property
-    def ndim(self):
+    def ndim(self) -> int:
         return self.val.ndim
     @property
-    def T(self):
+    def T(self) -> typing.Self:
         return __class__(self.val.T, self.err.T)
-    def sum(self, *args, **kwargs):
+    def sum(self, *args, **kwargs) -> typing.Self:
         return __class__(self.val.sum(*args, **kwargs), np.sqrt((self.err ** 2).sum(*args, **kwargs)))
-    def mean(self, *args, **kwargs):
+    def mean(self, *args, **kwargs) -> typing.Self:
         val = self.val.mean(*args, **kwargs)
         var = np.sqrt((self.err ** 2).sum(*args, **kwargs)) / (self.val.size / val.size)
         return __class__(val, var)
-    def median(self, *args, **kwargs):
+    def median(self, *args, **kwargs) -> typing.Self:
         """
         https://en.wikipedia.org/wiki/Median#Medians_for_samples
         "the relative standard error of the median will be (𝜋/2)^0.5 ~ 1.25, or 25% greater than the standard error of the mean"
@@ -164,7 +169,7 @@ class NdarrayWithErr:
         n   = self.val.size // val.size
         err = self.mean(*args, **kwargs).err
         return __class__(val, np.sqrt(np.pi / (2.0 * n)) * err)
-    def _minmax(self, *args, _proc: str=None, **kwargs):
+    def _minmax(self, *args, _proc: str=None, **kwargs) -> typing.Self:
         assert _proc in ["argmin", "argmax"]
         val   = getattr(self.val, _proc)(*args, **(kwargs | {"keepdims": True}))
         shape = getattr(self.val, _proc)(*args, **kwargs).shape
@@ -185,24 +190,70 @@ class NdarrayWithErr:
         val = self.val.reshape(-1)[idx].reshape(shape)
         err = self.err.reshape(-1)[idx].reshape(shape)
         return __class__(val, err)
-    def min(self, *args, **kwargs):
+    def min(self, *args, **kwargs) -> typing.Self:
         return self._minmax(*args, _proc="argmin", **kwargs)
-    def max(self, *args, **kwargs):
+    def max(self, *args, **kwargs) -> typing.Self:
         return self._minmax(*args, _proc="argmax", **kwargs)
-    def reshape(self, *args, **kwargs):
+    def reshape(self, *args, **kwargs) -> typing.Self:
         return __class__(self.val.reshape(*args, **kwargs), self.err.reshape(*args, **kwargs))
-    def to_numpy(self):
+    def to_numpy(self) -> np.ndarray:
         return self.val
-    def copy(self):
+    def copy(self) -> typing.Self:
         return __class__(self.val.copy(), self.err.copy())
 
-def nperr_stack(list_ndferr: list[NdarrayWithErr], *args, **kwargs) -> NdarrayWithErr:
-    val = np.stack([x.val for x in list_ndferr], *args, **kwargs)
-    err = np.stack([x.err for x in list_ndferr], *args, **kwargs)
-    return NdarrayWithErr(val, err)
+def stack(list_ndferr: list[np.ndarray | NdarrayWithErr], *args, **kwargs) -> np.ndarray | NdarrayWithErr:
+    assert isinstance(list_ndferr, list)
+    if all(isinstance(x, np.ndarray) for x in list_ndferr):
+        return np.stack(list_ndferr, *args, **kwargs)
+    else:
+        assert all(isinstance(x, NdarrayWithErr) for x in list_ndferr)
+        val = np.stack([x.val for x in list_ndferr], *args, **kwargs)
+        err = np.stack([x.err for x in list_ndferr], *args, **kwargs)
+        return NdarrayWithErr(val, err)
 
-def nperr_concat(list_ndferr: list[NdarrayWithErr], *args, **kwargs) -> NdarrayWithErr:
-    val = np.concatenate([x.val for x in list_ndferr], *args, **kwargs)
-    err = np.concatenate([x.err for x in list_ndferr], *args, **kwargs)
-    return NdarrayWithErr(val, err)
+def concatenate(list_ndferr: list[np.ndarray | NdarrayWithErr], *args, **kwargs) -> np.ndarray | NdarrayWithErr:
+    assert isinstance(list_ndferr, list)
+    if all(isinstance(x, np.ndarray) for x in list_ndferr):
+        return np.concatenate(list_ndferr, *args, **kwargs)
+    else:
+        assert all(isinstance(x, NdarrayWithErr) for x in list_ndferr)
+        val = np.concatenate([x.val for x in list_ndferr], *args, **kwargs)
+        err = np.concatenate([x.err for x in list_ndferr], *args, **kwargs)
+        return NdarrayWithErr(val, err)
 
+def take_along_axis(arr: np.ndarray | NdarrayWithErr, *args, **kwargs):
+    assert isinstance(arr, (np.ndarray, NdarrayWithErr))
+    if isinstance(arr, np.ndarray):
+        return np.take_along_axis(arr, *args, **kwargs)
+    else:
+        return NdarrayWithErr(np.take_along_axis(arr.val, *args, **kwargs), np.take_along_axis(arr.err, *args, **kwargs))
+
+def isotonic_regression_with_err(input_x: NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_loop: int=20) -> np.ndarray:
+    assert isinstance(input_x, NdarrayWithErr)
+    assert input_x.ndim == 2
+    assert isinstance(n_loop, int) and n_loop > 0
+    idx      = np.argsort(input_x.val, axis=-1)
+    sorted_x = take_along_axis(input_x, idx, axis=-1)
+    weight   = 1.0 / (sorted_x.err ** 2)
+    valret   = np.zeros_like(sorted_x.val)
+    gen      = np.random.Generator(np.random.PCG64(1)) # fix random seed.
+    random   = gen.standard_normal(n_loop * input_x.size).reshape(input_x.shape[0], n_loop, input_x.shape[1])
+    addnoise = sorted_x.val.reshape(input_x.shape[0], 1, input_x.shape[1]) + (random * sorted_x.err.reshape(input_x.shape[0], 1, input_x.shape[1]))
+    addnoise = np.clip(addnoise, min=y_min, max=y_max)
+    vals     = [
+        isotonic_regression(x, sample_weight=w, y_min=y_min, y_max=y_max)
+        for x, w in zip(addnoise.reshape(-1, input_x.shape[1]), np.tile(weight, (1, n_loop)).reshape(-1, input_x.shape[1]))
+    ]
+    vals     = np.stack(vals).reshape(input_x.shape[0], n_loop, input_x.shape[1]).mean(axis=1)
+    for i, _idx in enumerate(idx):
+        valret[i, _idx] = vals[i]
+    return valret
+
+def normalize(input_x: np.ndarray | NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_loop: int=20) -> np.ndarray:
+    assert isinstance(input_x, (np.ndarray, NdarrayWithErr))
+    assert input_x.ndim == 2
+    if isinstance(input_x, NdarrayWithErr):
+        output = isotonic_regression_with_err(input_x, y_min=y_min, y_max=y_max, n_loop=n_loop)
+    else:
+        output = input_x
+    return output / output.sum(axis=-1, keepdims=True)

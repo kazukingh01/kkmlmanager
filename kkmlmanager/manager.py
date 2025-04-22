@@ -144,7 +144,7 @@ class MLManager:
         return json.dumps(dictwk, indent=indent)
     
     @classmethod
-    def from_dict(cls, dictwk: dict, n_jobs: int=None, basedir: str=None):
+    def from_dict(cls, dictwk: dict, n_jobs: int | None=None, basedir: str | None=None):
         LOGGER.info("START")
         assert isinstance(dictwk, dict)
         assert n_jobs  is None or isinstance(n_jobs, int)
@@ -204,7 +204,7 @@ class MLManager:
         return ins
 
     @classmethod
-    def from_json(cls, json_str: str, n_jobs: int=None, basedir: str=None):
+    def from_json(cls, json_str: str, n_jobs: int | None=None, basedir: str | None=None):
         LOGGER.info("START")
         assert isinstance(json_str, str)
         ins = cls.from_dict(json.loads(json_str), n_jobs=n_jobs, basedir=basedir)
@@ -244,7 +244,7 @@ class MLManager:
         else:
             return copy.deepcopy(self)
 
-    def set_model(self, model, *args, model_func_predict: str=None, **kwargs):
+    def set_model(self, model, *args, model_func_predict: str | None=None, **kwargs):
         self.logger.info("START")
         self.logger.info(f"model: {model}, args: {args}, model_func_predict: {model_func_predict}, kwargs: {kwargs}")
         assert isinstance(model, type)
@@ -279,7 +279,7 @@ class MLManager:
         self.logger.info(f"columns new: {self.columns.shape}, columns before:{self.columns_hist[-1].shape}")
         self.logger.info("END")
 
-    def cut_features_by_variance(self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.99, ignore_nan: bool=False, n_divide: int=10000):
+    def cut_features_by_variance(self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float=0.99, ignore_nan: bool=False, n_divide: int=10000):
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
         assert isinstance(cutoff, float) and 0 < cutoff <= 1.0
@@ -311,7 +311,7 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_correlation(
-        self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.99, sample_size: int=None, dtype: str="float16", is_gpu: bool=False, 
+        self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float | None=0.99, sample_size: int | None=None, dtype: str="float16", is_gpu: bool=False, 
         corr_type: str="pearson", batch_size: int=100, min_n: int=10, **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
@@ -353,7 +353,7 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_randomtree_importance(
-        self, df: pd.DataFrame | pl.DataFrame=None, cutoff: float=0.9, max_iter: int=1, min_count: int=100, dtype="float32", **kwargs
+        self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float | None=0.9, max_iter: int=1, min_count: int=100, dtype="float32", **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
@@ -391,8 +391,8 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame | pl.DataFrame=None, df_test: pd.DataFrame | pl.DataFrame=None,
-        cutoff: int | float=None, thre_count: int | str="mean", n_split: int=5, n_cv: int=5, dtype: str="float32", **kwargs
+        self, df_train: pd.DataFrame | pl.DataFrame | None=None, df_test: pd.DataFrame | pl.DataFrame | None=None,
+        cutoff: int | float | None=None, thre_count: int | str="mean", n_split: int=5, n_cv: int=5, dtype: str="float32", **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert df_train is None or isinstance(df_train, (pd.DataFrame, pl.DataFrame))
@@ -460,7 +460,7 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
         return self
     
-    def proc_registry(self, dict_proc: dict=None):
+    def proc_registry(self, dict_proc: dict | None=None):
         self.logger.info("START")
         if dict_proc is None:
             if self.is_reg:
@@ -564,7 +564,7 @@ class MLManager:
         self.logger.info("END")
     
     def predict(
-        self, df: pd.DataFrame | pl.DataFrame=None, input_x: np.ndarray=None,
+        self, df: pd.DataFrame | pl.DataFrame | None=None, input_x: np.ndarray | None=None,
         is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self.logger.info("START", color=["GREEN", "BOLD"])
@@ -580,7 +580,7 @@ class MLManager:
         return output, input_y, input_index
     
     def set_post_model(
-        self, is_cv: bool=False, calibmodel: int | str=None, is_calib_after_cv: bool=False, list_cv: list[int]=None, 
+        self, is_cv: bool=False, calibmodel: int | str | None=None, is_calib_after_cv: bool=False, list_cv: list[int] | None=None, 
         is_normalize: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame=None
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
@@ -760,11 +760,11 @@ class MLManager:
 
     def fit_cross_validation(
         self, df_train: pd.DataFrame | pl.DataFrame,
-        n_split: int=None, n_cv: int=None, mask_split: np.ndarray=None,
-        cols_multilabel_split: list[str]=None, group_split: str | list[str]=None,
-        indexes_train: list[np.ndarray]=None, indexes_valid: list[np.ndarray]=None,
+        n_split: int | None=None, n_cv: int | None=None, mask_split: np.ndarray | None=None,
+        cols_multilabel_split: list[str] | None=None, group_split: str | list[str] | None=None,
+        indexes_train: list[np.ndarray] | None=None, indexes_valid: list[np.ndarray] | None=None,
         params_fit: str | dict="{}", params_fit_evaldict: dict={},
-        is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, dict_extra_cols: dict[str, str]=None,
+        is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, dict_extra_cols: dict[str, str] | None=None,
     ):
         """
         n_split:
@@ -935,7 +935,7 @@ class MLManager:
             self.evaluate(df_test, is_store=True)
         self.logger.info("END", color=["GREEN", "BOLD"])
     
-    def evaluate(self, df_test: pd.DataFrame | pl.DataFrame, columns_ans: str | np.ndarray=None, is_store: bool=False, **kwargs):
+    def evaluate(self, df_test: pd.DataFrame | pl.DataFrame, columns_ans: str | np.ndarray | None=None, is_store: bool=False, **kwargs):
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert isinstance(df_test, (pd.DataFrame, pl.DataFrame))
         if columns_ans is not None:
@@ -1008,7 +1008,7 @@ class MLManager:
 
     @classmethod
     def load(cls, filepath: str, n_jobs: int, encoding: str="utf8"):
-        LOGGER.info("START")
+        LOGGER.info("START", color=["GREEN", "BOLD"])
         assert isinstance(n_jobs, int)
         assert isinstance(filepath, str)
         LOGGER.info(f"load file: {filepath}")
@@ -1031,5 +1031,5 @@ class MLManager:
         for x in dir(tmp):
             if not hasattr(manager, x):
                 setattr(manager, x, getattr(tmp, x)) # initialize
-        LOGGER.info("END")
+        LOGGER.info("END", color=["GREEN", "BOLD"])
         return manager

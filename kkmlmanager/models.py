@@ -11,6 +11,7 @@ from .calibration import MultiLabelRegressionWithError, calibration_curve_plot, 
 from .procs import mask_values_for_json
 from .util.com import check_type_list, encode_object, decode_object
 from .util.numpy import NdarrayWithErr
+from .util import numpy as npe
 LOGGER = set_logger(__name__)
 
 
@@ -285,8 +286,6 @@ class Calibrator(BaseModel):
         LOGGER.info("calibrate output ...")
         input_x, _ = self.check_and_reshape_input(input_x)
         output: np.ndarray | NdarrayWithErr = self.calibrator.predict(input_x)
-        if isinstance(output, NdarrayWithErr):
-            output = output.to_numpy()
         assert output.shape == input_x.shape
         if is_normalize:
             LOGGER.info("normalize output ...")
@@ -294,6 +293,7 @@ class Calibrator(BaseModel):
                 output = (output / output.sum(axis=-1, keepdims=True))
             else:
                 LOGGER.warning(f"This shape {output.shape} is not supported for normalization.")
+        LOGGER.info(f"output ( {type(output)} ) : {output.shape}")
         LOGGER.info(f"END: {self.__class__.__name__}")
         return output
     def dump_with_loader(self):
@@ -369,7 +369,7 @@ class ChainModel(BaseModel):
         )
     def check_eval(self, input_x: np.ndarray, **kwargs):
         ndfs     = {x["name"]: np.random.rand(*[(y if y > 0 else 10) for y in x["shape"]]) for x in self.models}
-        dict_all = {"input": input_x, "input_pre": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd} | kwargs | ndfs
+        dict_all = {"input": input_x, "input_pre": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd, "npe": npe} | kwargs | ndfs
         output   = eval(self.eval_post, {}, dict_all)
         LOGGER.info(f"type: {type(output)}, output: {output}")
     def _predict_common(self, input_x: np.ndarray, **kwargs):
@@ -382,11 +382,12 @@ class ChainModel(BaseModel):
         - np: numpy
         - pl: polars
         - pd: pandas
-        - **names: ouptuts via self.model[i]["eval]
+        - npe: numpy with error
+        - **names: ouptuts via self.model[i]["eval"]
         - **kwargs
         """
         LOGGER.info(f"START: {self.__class__.__name__}", color=["GREEN", "BOLD"])
-        dict_all = {"input": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd} | kwargs
+        dict_all = {"input": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd, "npe": npe} | kwargs
         LOGGER.info(f"predict pre process ...", color=["CYAN"])
         dict_all = dict_all | {"input_pre": eval(self.eval_pre, {}, dict_all)}
         for i, dictwk in enumerate(self.models):

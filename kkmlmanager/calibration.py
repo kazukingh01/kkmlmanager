@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from kklogger import set_logger
 
 # local package
-from .util.numpy import NdarrayWithErr, nperr_stack
+from .util.numpy import NdarrayWithErr
+from .util import numpy as npe
 from .util.com import encode_object, decode_object
 LOGGER = set_logger(__name__)
 
@@ -179,7 +180,7 @@ class MultiLabelRegressionWithError(BaseCalibrator):
         list_pred = []
         for _probs, model in zip(probs.T, self.list_models):
             list_pred.append(model.predict(_probs))
-        output = nperr_stack(list_pred, dtype=np.float64).T
+        output = npe.stack(list_pred, dtype=np.float64).T
         if is_binary:
             output = output[:, 0]
         LOGGER.info("END")
