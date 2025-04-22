@@ -161,10 +161,9 @@ class MultiLabelRegressionWithError(BaseCalibrator):
                 labels = label_binarize(labels, classes=classes)
             if classes.shape[0] == 2 and labels.ndim == 2 and labels.shape[1] == 1:
                 assert np.allclose(classes, np.array([0, 1]))
-                labels = np.concatenate([(labels == 0).astype(int), labels], axis=-1)
-        assert probs.shape == labels.shape
         if len(probs. shape) == 1: probs  = probs. reshape(-1, 1)
         if len(labels.shape) == 1: labels = labels.reshape(-1, 1)
+        assert probs.shape == labels.shape
         for i, (_probs, _labels) in enumerate(zip(probs.T, labels.T)):
             LOGGER.info(f"fitting ... {i + 1} / {probs.shape[-1]}")
             self.list_models.append(self.basemodel())
@@ -174,12 +173,17 @@ class MultiLabelRegressionWithError(BaseCalibrator):
     def predict(self, probs: np.ndarray) -> NdarrayWithErr:
         LOGGER.info("START")
         assert isinstance(probs, np.ndarray) and len(probs.shape) in [1,2]
+        is_binary = (probs.ndim == 1)
         if len(probs.shape) == 1: probs = probs.reshape(-1, 1)
+        assert probs.shape[-1] == len(self.list_models)
         list_pred = []
         for _probs, model in zip(probs.T, self.list_models):
             list_pred.append(model.predict(_probs))
+        output = nperr_stack(list_pred, dtype=np.float64).T
+        if is_binary:
+            output = output[:, 0]
         LOGGER.info("END")
-        return nperr_stack(list_pred, dtype=np.float64).T
+        return output
 
 
 class TemperatureScaling(BaseCalibrator):
@@ -207,8 +211,12 @@ class TemperatureScaling(BaseCalibrator):
         LOGGER.info("START")
         assert isinstance(probs,  np.ndarray)
         assert isinstance(labels, np.ndarray)
-        assert len(probs. shape) >= 2
-        assert len(labels.shape) == 1
+        if probs.ndim == 1:
+            probs = probs.reshape(-1, 1)
+        if probs.ndim == 2 and probs.shape[1] == 1:
+            probs = np.concatenate([1.0 - probs, probs], axis=-1)
+        assert probs. ndim >= 2
+        assert labels.ndim == 1
         assert probs.shape[0] == labels.shape[0]
         assert isinstance(axis, int)
         logits = np.log(probs + 1e-12)
@@ -224,18 +232,29 @@ class TemperatureScaling(BaseCalibrator):
         self.T = float(res.x[0])
         LOGGER.info("END")
         return self
-    def predict(self, input_x: np.ndarray, axis: int=-1):
+    def predict(self, probs: np.ndarray, axis: int=-1):
         LOGGER.info("START")
-        assert isinstance(input_x, np.ndarray)
-        assert len(input_x.shape) >= 2
-        logits = np.log(input_x + 1e-12)
-        val    = self.temperature_scaling(logits, self.T, axis)
+        assert isinstance(probs, np.ndarray)
+        is_binary, is_single = False, False
+        if probs.ndim == 1:
+            probs = probs.reshape(-1, 1)
+            is_single = True
+        if probs.ndim == 2 and probs.shape[1] == 1:
+            probs = np.concatenate([1.0 - probs, probs], axis=-1)
+            is_binary = True
+        assert probs.ndim >= 2
+        logits  = np.log(probs + 1e-12)
+        calibrated = self.temperature_scaling(logits, self.T, axis)
+        if is_binary:
+            calibrated = calibrated[:, -1:]
+        if is_single:
+            calibrated = calibrated[:, -1]
         LOGGER.info("END")
-        return val
+        return calibrated
     @classmethod
     def temperature_scaling(cls, logits: np.ndarray, temperature: int | float=1.0, axis: int=-1):
         assert isinstance(logits, np.ndarray)
-        assert len(logits.shape) >= 2
+        assert logits.ndim >= 2
         assert isinstance(temperature, (int, float)) and temperature > 0.0
         assert isinstance(axis, int)
         centered = logits - np.max(logits, axis=axis, keepdims=True)
@@ -246,8 +265,8 @@ class TemperatureScaling(BaseCalibrator):
         assert isinstance(temperature, (int, float)) and temperature > 0.0
         assert isinstance(logits, np.ndarray)
         assert isinstance(labels, np.ndarray)
-        assert len(logits.shape) >= 2
-        assert len(labels.shape) == 1
+        assert logits.ndim >= 2
+        assert labels.ndim == 1
         assert logits.shape[0] == labels.shape[0]
         assert isinstance(axis, int)
         T        = float(temperature)
@@ -266,7 +285,7 @@ def calib_with_error(prob: np.ndarray, target: np.ndarray, n_bins: int=10):
     assert isinstance(prob, np.ndarray)
     assert isinstance(target, np.ndarray)
     assert prob.shape == target.shape
-    assert len(prob.shape) == len(target.shape) == 1
+    assert prob.ndim == target.ndim == 1
     assert target.dtype in [np.int8, np.int16, np.int32, np.int64, int, bool, np.bool_]
     target = target.astype(int)
     assert np.sort(np.unique(target)).tolist() == [0, 1]

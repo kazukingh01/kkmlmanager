@@ -158,13 +158,13 @@ class Calibrator(BaseModel):
             model = encode_object(self.model, mode=mode, savedir=savedir)
         return {
             "__BaseModel__": "kkmlmanager.models.Calibrator",
-            "model": model,
-            "calibrator": self.calibrator.to_dict(),
+            "model":        model,
+            "calibrator":   self.calibrator.to_dict(),
             "func_predict": self.func_predict,
             "is_normalize": self.is_normalize,
-            "is_reg": self.is_reg,
-            "calibmodel": self.calibmodel,
-            "classes_": self.classes_.tolist() if self.classes_ is not None else None,
+            "is_reg":       self.is_reg,
+            "calibmodel":   self.calibmodel,
+            "classes_":     self.classes_.tolist() if self.classes_ is not None else None,
             "calib_fig_wo_norm":    {
                 x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig_wo_norm.items()
             } if self.calib_fig_wo_norm    is not None else None,
@@ -185,7 +185,10 @@ class Calibrator(BaseModel):
             model = _cls.from_dict(model, basedir=basedir)
         else:
             model = decode_object(model, basedir=basedir)
-        ins            = cls(model, dict_model["func_predict"], dict_model["is_normalize"], dict_model["is_reg"], calibmodel=dict_model["calibmodel"])
+        ins = cls(
+            model, dict_model["func_predict"], is_normalize=dict_model["is_normalize"],
+            is_reg=dict_model["is_reg"], calibmodel=dict_model["calibmodel"]
+        )
         _path, _cls    = dict_model["calibrator"]["__BaseModel__"].rsplit(".", 1)
         _cls: BaseCalibrator = getattr(importlib.import_module(_path), _cls)
         ins.calibrator = _cls.from_dict(dict_model["calibrator"])
@@ -200,42 +203,67 @@ class Calibrator(BaseModel):
             x: decode_object(y) for x, y in dict_model["calib_fig_with_norm2"].items()
         } if dict_model["calib_fig_with_norm2"] is not None else None
         return ins
+    def check_and_reshape_input(self, input_x: np.ndarray, input_y: np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
+        assert  isinstance(input_x, np.ndarray) and input_x.ndim in [1, 2]
+        assert (isinstance(input_y, np.ndarray) and input_y.ndim in [1, 2]) or (input_y is None)
+        LOGGER.info(f"[ IN ]  input_x.shape: {input_x.shape}, input_y.shape: {input_y.shape if input_y is not None else None}")
+        if self.is_reg:
+            if input_y is not None:
+                assert input_x.shape == input_y.shape
+                if input_x.ndim == 2 and input_y.ndim == 2 and input_x.shape[1] == 1:
+                    input_x = input_x.reshape(-1)
+                    input_y = input_y.reshape(-1)
+            else:
+                if input_x.ndim == 2 and input_x.shape[1] == 1:
+                    input_x = input_x.reshape(-1)
+        else:
+            classes: np.ndarray | None = self.classes_
+            if input_y is not None:
+                assert input_y.ndim == 1
+                assert input_x.shape[0] == input_y.shape[0]
+                classes = np.sort(np.unique(input_y)).astype(int)
+                assert np.allclose(classes, np.arange(classes.shape[0], dtype=int))
+            if input_x.ndim == 2 and input_x.shape[1] == 1:
+                input_x = input_x.reshape(-1)
+            if classes is not None:
+                if classes.shape[0] == 2:
+                    if input_x.ndim == 2 and input_x.shape[1] == 2:
+                        input_x = input_x[:, -1]
+                    assert input_x.ndim == 1
+                elif classes.shape[0] >= 3:
+                    assert input_x.ndim == 2
+                    assert input_x.shape[1] == classes.shape[0]
+        LOGGER.info(f"[ OUT ] input_x.shape: {input_x.shape}, input_y.shape: {input_y.shape if input_y is not None else None}")
+        return input_x, input_y
     def fit(self, input_x: np.ndarray, input_y: np.ndarray, *args, is_input_prob: bool=False, n_bins: int=20, **kwargs):
         """
         if is_input_prob == True, 'input_x' must be probabilities, not Features.
         """
         LOGGER.info(f"START: {self.__class__.__name__}")
-        assert isinstance(input_y, np.ndarray) and input_y.ndim in [1, 2]
         assert isinstance(is_input_prob, bool)
         assert isinstance(n_bins, int) and n_bins >= 5
         if is_input_prob == False:
             input_x = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
-        LOGGER.info(f"input_x.shape: {input_x.shape}, input_y.shape: {input_y.shape}, is_input_prob: {is_input_prob}, n_bins: {n_bins}")
-        assert isinstance(input_x, np.ndarray) and input_x.ndim in [1, 2]          
+        LOGGER.info(f"args: {args}, is_input_prob: {is_input_prob}, n_bins: {n_bins}, kwargs: {kwargs}")
+        input_x, input_y = self.check_and_reshape_input(input_x, input_y=input_y)
         if self.is_reg:
             self.classes_ = np.arange(1, dtype=int) if input_y.ndim == 1 else np.arange(input_y.shape[-1], dtype=int)
-            assert input_x.shape == input_y.shape
         else:
             self.classes_ = np.sort(np.unique(input_y)).astype(int)
-            assert self.classes_.shape[0] >= 2
-            assert input_x.shape[0] == input_y.shape[0]
-            if input_x.ndim == 1:
-                assert np.allclose(self.classes_, np.array([0, 1]))
-                input_x = input_x.reshape(-1, 1)
-                input_x = np.concatenate([1 - input_x, input_x], axis=-1)
-            elif input_x.shape[1] == 1 and self.classes_.shape[0] == 2:
-                assert np.allclose(self.classes_, np.array([0, 1]))
-                input_x = np.concatenate([1 - input_x, input_x], axis=-1)
         self.calibrator.fit(input_x, input_y)
         output = self._predict_common(input_x, is_mock=True)
         assert isinstance(output, (np.ndarray, NdarrayWithErr))
-        assert output.ndim == 2
         if not self.is_reg:
             if isinstance(output, NdarrayWithErr):
-                ndfwk = output.to_numpy()
-            else:
-                ndfwk = output
-            self.calib_fig_wo_norm      = calibration_curve_plot(input_x, ndfwk,                                     input_y, n_bins=n_bins)
+                output = output.to_numpy()
+            if self.classes_.shape[0] == 2 and input_x.ndim == 1:
+                assert output.ndim == 1
+                input_x = np.stack([1 - input_x, input_x]).T
+                output  = np.stack([1 - output , output ]).T
+            assert output.shape == input_x.shape
+            assert input_x.ndim == 2
+            assert input_x.shape[1] == self.classes_.shape[0]
+            self.calib_fig_wo_norm = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
             # self.calib_fig_with_norm1 = calibration_curve_plot(input_x, ndfwk / ndfwk.sum(axis=-1, keepdims=True), input_y, n_bins=n_bins)
             # self.calib_fig_with_norm2 = calibration_curve_plot(input_x, output.to_numpy(axis_normalize=-1),        input_y, n_bins=n_bins)
         LOGGER.info(f"END: {self.__class__.__name__}")
@@ -251,27 +279,21 @@ class Calibrator(BaseModel):
         assert isinstance(is_normalize, (bool, type(None)))
         is_normalize = self.is_normalize if is_normalize is None else is_normalize
         LOGGER.info(f"is_mock: {is_mock}, model predict function: '{self.func_predict}', is_normalize: {is_normalize}")
-        is_binary = False
-        if is_mock:
-            output = input_x
-        else:
-            output = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
-            if len(output.shape) == 1:
-                output    = output.reshape(-1, 1)
-                is_binary = True
+        if not is_mock:
+            input_x = getattr(self.model, self.func_predict)(input_x, *args, **kwargs)
+        assert isinstance(input_x, np.ndarray)
         LOGGER.info("calibrate output ...")
-        output = self.calibrator.predict(output)
+        input_x, _ = self.check_and_reshape_input(input_x)
+        output: np.ndarray | NdarrayWithErr = self.calibrator.predict(input_x)
+        if isinstance(output, NdarrayWithErr):
+            output = output.to_numpy()
+        assert output.shape == input_x.shape
         if is_normalize:
             LOGGER.info("normalize output ...")
-            if len(output.shape) == 2 and output.shape[-1] >= 2:
-                if isinstance(output, NdarrayWithErr):
-                    output = output.to_numpy()
-                output = output / output.sum(axis=-1, keepdims=True)
+            if output.ndim == 2 and output.shape[-1] >= 2:
+                output = (output / output.sum(axis=-1, keepdims=True))
             else:
-                LOGGER.warning(f"This shape ({output.shape}) is not supported for normalization.")
-        if is_binary:
-            # return to same shape as model's output
-            output = output[:, -1]
+                LOGGER.warning(f"This shape {output.shape} is not supported for normalization.")
         LOGGER.info(f"END: {self.__class__.__name__}")
         return output
     def dump_with_loader(self):
@@ -363,15 +385,17 @@ class ChainModel(BaseModel):
         - **names: ouptuts via self.model[i]["eval]
         - **kwargs
         """
-        LOGGER.info(f"START: {self.__class__.__name__}")
+        LOGGER.info(f"START: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         dict_all = {"input": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd} | kwargs
+        LOGGER.info(f"predict pre process ...", color=["CYAN"])
         dict_all = dict_all | {"input_pre": eval(self.eval_pre, {}, dict_all)}
         for i, dictwk in enumerate(self.models):
-            LOGGER.info(f"predict model [{i}], name: {dictwk['name']}, model: {dictwk['model']}")
+            LOGGER.info(f"predict model [{i}], name: {dictwk['name']}, model: {dictwk['model']}", color=["CYAN"])
             output   = eval(dictwk["eval"], {}, dict_all | {"model": dictwk["model"]})
-            dict_all = dict_all | {dictwk["name"]: output}
+            dict_all = dict_all | {dictwk["name"]: output.copy()}
+        LOGGER.info(f"predict post process ...", color=["CYAN"])
         output = eval(self.eval_post, {}, dict_all)
-        LOGGER.info(f"END: {self.__class__.__name__}")
+        LOGGER.info(f"END: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         return output
     def dump_with_loader(self):
         return {

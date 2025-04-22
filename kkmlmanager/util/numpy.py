@@ -193,6 +193,8 @@ class NdarrayWithErr:
         return __class__(self.val.reshape(*args, **kwargs), self.err.reshape(*args, **kwargs))
     def to_numpy(self):
         return self.val
+    def copy(self):
+        return __class__(self.val.copy(), self.err.copy())
 
 def nperr_stack(list_ndferr: list[NdarrayWithErr], *args, **kwargs) -> NdarrayWithErr:
     val = np.stack([x.val for x in list_ndferr], *args, **kwargs)
