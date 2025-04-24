@@ -301,7 +301,9 @@ def calib_with_error(prob: np.ndarray, target: np.ndarray, n_bins: int=10):
     return ndf_x, ndf_x_e, ndf_y, ndf_y_e
 
 
-def calibration_curve_plot(prob_pre: np.ndarray, prob_aft: np.ndarray, target: np.ndarray, n_bins: int=10, figsize: tuple=(12, 8)):
+def calibration_curve_plot(
+    prob_pre: np.ndarray, prob_aft: np.ndarray, target: np.ndarray, n_bins: int=10, figsize: tuple=(12, 8)
+) -> dict[str, plt.figure]:
     """
     Plot calibration curve.
     Params::

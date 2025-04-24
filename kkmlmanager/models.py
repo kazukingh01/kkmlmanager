@@ -142,9 +142,7 @@ class Calibrator(BaseModel):
         self.is_reg        = is_reg
         self.calibmodel    = calibmodel
         self.classes_      = None
-        self.calib_fig_wo_norm    = None
-        self.calib_fig_with_norm1 = None
-        self.calib_fig_with_norm2 = None
+        self.calib_fig     = None
         super().__init__(func_predict, default_params_for_predict={"is_mock": False})
         LOGGER.info(f"END: {self.__class__.__name__}")
     def __str__(self):
@@ -166,15 +164,9 @@ class Calibrator(BaseModel):
             "is_reg":       self.is_reg,
             "calibmodel":   self.calibmodel,
             "classes_":     self.classes_.tolist() if self.classes_ is not None else None,
-            "calib_fig_wo_norm":    {
-                x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig_wo_norm.items()
-            } if self.calib_fig_wo_norm    is not None else None,
-            "calib_fig_with_norm1": {
-                x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig_with_norm1.items()
-            } if self.calib_fig_with_norm1 is not None else None,
-            "calib_fig_with_norm2": {
-                x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig_with_norm2.items()
-            } if self.calib_fig_with_norm2 is not None else None,
+            "calib_fig": {
+                x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig.items()
+            } if self.calib_fig is not None else None,
         }
     @classmethod
     def from_dict(cls, dict_model: dict, basedir: str=None):
@@ -194,17 +186,11 @@ class Calibrator(BaseModel):
         _cls: BaseCalibrator = getattr(importlib.import_module(_path), _cls)
         ins.calibrator = _cls.from_dict(dict_model["calibrator"])
         ins.classes_   = np.array(dict_model["classes_"]) if dict_model["classes_"] is not None else None
-        ins.calib_fig_wo_norm    = {
-            x: decode_object(y) for x, y in dict_model["calib_fig_wo_norm"].items()
-        } if dict_model["calib_fig_wo_norm"]    is not None else None
-        ins.calib_fig_with_norm1 = {
-            x: decode_object(y) for x, y in dict_model["calib_fig_with_norm1"].items()
-        } if dict_model["calib_fig_with_norm1"] is not None else None
-        ins.calib_fig_with_norm2 = {
-            x: decode_object(y) for x, y in dict_model["calib_fig_with_norm2"].items()
-        } if dict_model["calib_fig_with_norm2"] is not None else None
+        ins.calib_fig  = {
+            x: decode_object(y) for x, y in dict_model["calib_fig"].items()
+        } if dict_model["calib_fig"] is not None else None
         return ins
-    def check_and_reshape_input(self, input_x: np.ndarray, input_y: np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
+    def check_and_reshape_input(self, input_x: np.ndarray, input_y: np.ndarray | None=None) -> tuple[np.ndarray, np.ndarray]:
         assert  isinstance(input_x, np.ndarray) and input_x.ndim in [1, 2]
         assert (isinstance(input_y, np.ndarray) and input_y.ndim in [1, 2]) or (input_y is None)
         LOGGER.info(f"[ IN ]  input_x.shape: {input_x.shape}, input_y.shape: {input_y.shape if input_y is not None else None}")
@@ -264,9 +250,7 @@ class Calibrator(BaseModel):
             assert output.shape == input_x.shape
             assert input_x.ndim == 2
             assert input_x.shape[1] == self.classes_.shape[0]
-            self.calib_fig_wo_norm = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
-            # self.calib_fig_with_norm1 = calibration_curve_plot(input_x, ndfwk / ndfwk.sum(axis=-1, keepdims=True), input_y, n_bins=n_bins)
-            # self.calib_fig_with_norm2 = calibration_curve_plot(input_x, output.to_numpy(axis_normalize=-1),        input_y, n_bins=n_bins)
+            self.calib_fig = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
         LOGGER.info(f"END: {self.__class__.__name__}")
         return self
     def _predict_common(self, input_x, *args, is_mock: bool=False, is_normalize: bool=None, **kwargs) -> NdarrayWithErr:
