@@ -5,7 +5,7 @@ import numpy as np
 from kkmlmanager.procs import BaseProc, ProcMinMaxScaler, ProcStandardScaler, ProcRankGauss, \
     ProcPCA, ProcOneHotEncoder, ProcFillNa, ProcFillNaMinMaxRandomly, ProcReplaceValue, \
     ProcReplaceInf, ProcToValues, ProcMap, ProcAsType, ProcReshape, ProcDropNa, \
-    ProcCondition, ProcEval
+    ProcCondition, ProcEval, ProcAutoCompleteColumns
 
 def isnan_obj(x):
     if x is None:
@@ -117,24 +117,30 @@ if __name__ == "__main__":
     for df, itype in zip([df_org.clone(), df_org.clone().to_pandas(), df_org.clone().to_numpy()], ["pl", "pd", "np"]):
         proc = ProcMinMaxScaler()
         proc.fit(df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
+        print(proc)
         proc    (df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
         proc = ProcStandardScaler()
         proc.fit(df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
+        print(proc)
         proc    (df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
         proc = ProcRankGauss(n_quantiles=df.shape[0])
         proc.fit(df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
+        print(proc)
         proc    (df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)])
         proc = ProcPCA()
         proc.fit(df[columns_coverter(['float_normal1', 'float_normal2'], itype)])
+        print(proc)
         proc    (df[columns_coverter(['float_normal1', 'float_normal2'], itype)])
         proc = ProcOneHotEncoder()
         proc.fit(df[columns_coverter(['id'], itype)])
+        print(proc)
         proc    (df[columns_coverter(['id'], itype)])
         if itype == "np":
             for x in ["mean", "max", "min", "median", 1, 2.2, [1,1,1,1]]:
                 proc = ProcFillNa(x)
                 dfwk = df[columns_coverter(['float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2'], itype)].astype(float)
                 proc.fit(dfwk)
+                print(proc)
                 df1 = proc(dfwk)
                 df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(dfwk)
                 if isinstance(df1, np.ndarray):
@@ -148,6 +154,7 @@ if __name__ == "__main__":
             ]:
                 proc = ProcFillNa(x)
                 proc.fit(df)
+                print(proc)
                 df1 = proc(df)
                 df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
                 if isinstance(df1, np.ndarray):
@@ -158,6 +165,7 @@ if __name__ == "__main__":
             dfwk = df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_with_nan'], itype)].astype(float)
             proc = ProcFillNaMinMaxRandomly()
             proc.fit(dfwk)
+            print(proc)
             df1 = proc(dfwk)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(dfwk)
             if isinstance(df1, np.ndarray):
@@ -173,6 +181,7 @@ if __name__ == "__main__":
                 pass
         proc = ProcReplaceValue({float("inf"): 100, float("-inf"): -100}, columns=columns_coverter(['float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2'], itype, flg=1))
         proc.fit(df)
+        print(proc)
         df1 = proc(df)
         df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
         if isinstance(df1, np.ndarray):
@@ -184,6 +193,7 @@ if __name__ == "__main__":
             columns_coverter('float_with_nan', itype, flg=2): {float("inf"): 100, float("-inf"): -100},
         })
         proc.fit(df)
+        print(proc)
         df1 = proc(df)
         df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
         if isinstance(df1, np.ndarray):
@@ -192,6 +202,7 @@ if __name__ == "__main__":
             assert df1.equals(df2)
         proc = ProcReplaceInf()
         proc.fit(df)
+        print(proc)
         df1 = proc(df)
         df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
         if isinstance(df1, np.ndarray):
@@ -208,11 +219,13 @@ if __name__ == "__main__":
         else:
             proc = ProcToValues()
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             assert isinstance(df1, np.ndarray) and isinstance(df2, np.ndarray)
         proc = ProcMap({"Hello": "D"}, columns_coverter("str_no_nan", itype, flg=2), fill_null="E")
         proc.fit(df)
+        print(proc)
         df1 = proc(df)
         df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
         if isinstance(df1, np.ndarray):
@@ -222,6 +235,7 @@ if __name__ == "__main__":
         if itype == "pl":
             proc = ProcAsType(pl.Float32, columns=columns_coverter(['int_no_nan', 'int_with_nan', 'float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2'], itype, flg=1))
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -231,6 +245,7 @@ if __name__ == "__main__":
         elif itype == "pd":
             proc = ProcAsType(np.float32, columns=columns_coverter(['int_no_nan', 'int_with_nan', 'float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2'], itype, flg=1))
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -241,6 +256,7 @@ if __name__ == "__main__":
             dfwk = df[columns_coverter(['int_no_nan', 'int_with_nan', 'float_no_nan', 'float_with_nan', 'float_normal1', 'float_normal2'], itype)]
             proc = ProcAsType(np.float32)
             proc.fit(dfwk)
+            print(proc)
             df1 = proc(dfwk)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(dfwk)
             if isinstance(df1, np.ndarray):
@@ -250,6 +266,7 @@ if __name__ == "__main__":
         if itype == "np":
             proc = ProcDropNa(columns=columns_coverter(['int_with_nan', 'float_with_nan'], itype, flg=1))
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -259,6 +276,7 @@ if __name__ == "__main__":
         else:
             proc = ProcDropNa(columns=columns_coverter(["str_with_nan", "bool_with_nan"], itype, flg=1))
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -275,6 +293,7 @@ if __name__ == "__main__":
         else:
             proc = ProcCondition("int_no_nan > 0")
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -284,6 +303,7 @@ if __name__ == "__main__":
         if itype == "np":
             proc = ProcReshape(-1)
             proc.fit(df)
+            print(proc)
             df1 = proc(df)
             df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
             if isinstance(df1, np.ndarray):
@@ -299,9 +319,32 @@ if __name__ == "__main__":
                 pass
         proc = ProcEval("np.array(__input.shape)")
         proc.fit(df)
+        print(proc)
         df1 = proc(df)
         df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
         if isinstance(df1, np.ndarray):
             assert np.all((df1 == df2) | np.vectorize(isnan_obj)(df1) | np.vectorize(isnan_obj)(df2))
         else:
             assert df1.equals(df2)
+        if itype in ["pl", "pd"]:
+            proc = ProcAutoCompleteColumns()
+            proc.fit(df)
+            print(proc)
+            df1 = proc(df)
+            df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
+            assert df1.equals(df2)
+            if itype == "pl":
+                df3 = proc(df[:, :1])
+                assert df1.schema.to_python() == df3.schema.to_python()
+                for x in df3[:, 1:].with_columns(pl.all().is_null()):
+                    assert x.all()
+            else:
+                df3 = proc(df.iloc[:, :1])
+                assert np.all(((~df3.iloc[:, 1:].isna()).sum() == 0).to_numpy())
+        else:
+            try:
+                proc = ProcAutoCompleteColumns()
+                proc.fit(df)
+                raise
+            except TypeError:
+                pass

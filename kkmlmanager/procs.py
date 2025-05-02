@@ -12,7 +12,7 @@ except ModuleNotFoundError:
 
 # local package
 from .util.dataframe import query
-from .util.com import check_type, check_type_list
+from .util.com import check_type_list
 
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "ProcCondition",
     "ProcDigitize",
     "ProcEval",
+    "ProcAutoCompleteColumns",
 ]
 
 
@@ -47,7 +48,7 @@ COLS_NOT_DISP = ["shape_in", "shape_out", "is_check", "is_fit", "type_in", "type
 
 
 def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | list | tuple:
-    assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
+    assert isinstance(input, (pd.DataFrame, np.ndarray, pl.DataFrame))
     if isinstance(input, pd.DataFrame):
         assert input.columns.dtype == object
         shape: list = input.columns.tolist().copy()
@@ -57,7 +58,7 @@ def info_columns(input: pd.DataFrame | np.ndarray | pl.DataFrame) -> pd.Index | 
         shape: tuple = input.shape[1:]
     return shape
 
-def mask_values_for_json(value: int | float | list | dict, is_key: bool=False):
+def mask_values_for_json(value: int | float | list | dict | datetime.date | datetime.datetime, is_key: bool=False):
     if is_key:
         if isinstance(value, int):
             return f"__int__({value})"
@@ -85,6 +86,10 @@ def mask_values_for_json(value: int | float | list | dict, is_key: bool=False):
             return "__str__"
         elif value == bool:
             return "__bool__"
+        elif value == datetime.date:
+            return "__date__"
+        elif value == datetime.datetime:
+            return "__datetime__"
         elif value == np.int8:
             return "__int8__"
         elif value == np.int16:
@@ -132,6 +137,10 @@ def unmask_values_for_json(value: int | float | list | dict):
         return str
     elif value == "__bool__":
         return bool
+    elif value == "__date__":
+        return datetime.date
+    elif value == "__datetime__":
+        return datetime.datetime
     elif value == "__int8__":
         return np.int8
     elif value == "__int16__":
@@ -174,12 +183,17 @@ def set_attributes(ins, dict_proc: dict, exclude: list[str]=[]):
     for x, y in {a: b for a, b in dict_proc.items() if a not in exclude}.items():
         setattr(ins, x, unmask_values_for_json(y))
 
-def disp_columns(columns: None | str | int | list[str], max_disp: int=10) -> str:
+def disp_columns(columns: None | str | int | list[str] | dict, max_disp: int=10) -> str:
     if isinstance(columns, list):
         if len(columns) <= max_disp:
             return f"{columns}"
         else:
             return f"{str(columns[:max_disp])[:-1]}, ... ]"
+    elif isinstance(columns, dict):
+        if len(columns) <= max_disp:
+            return f"{columns}"
+        else:
+            return (f"{str({x: y for x, y in zip(list(columns.keys())[:max_disp], list(columns.values())[:max_disp])})[:-1]}, ... " + "}")
     else:
         return str(columns)
 
@@ -200,7 +214,7 @@ class BaseProc:
         self.n_jobs      = n_jobs
         self.is_jobs_fix = is_jobs_fix
     def fit(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, *args, **kwargs):
-        assert check_type(input, [pd.DataFrame, np.ndarray, pl.DataFrame])
+        assert isinstance(input, (pd.DataFrame, np.ndarray, pl.DataFrame))
         self.type_in  = {pd.DataFrame: "pd", np.ndarray: "np", pl.DataFrame: "pl"}[type(input)]
         self.shape_in = info_columns(input)
         output        = self.fit_main(input, *args, **kwargs) # Basically, it's not retured. but some process run "fit" & "transform" at once because it's efficient
@@ -210,7 +224,7 @@ class BaseProc:
         self.type_out  = {pd.DataFrame: "pd", np.ndarray: "np", pl.DataFrame: "pl"}[type(output)]
         self.shape_out = info_columns(output)
         return output
-    def __call__(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, *args, n_jobs: int=None, is_check: bool=None, **kwargs):
+    def __call__(self, input: pd.DataFrame | np.ndarray | pl.DataFrame, *args, n_jobs: int=None, is_check: bool | None=None, **kwargs):
         if is_check is not None:
             assert isinstance(is_check, bool)
         else:
@@ -328,7 +342,7 @@ class ProcUMAP(ProcSKLearn):
 
 class ProcFillNa(BaseProc):
     def __init__(self, fill_value: str | int | float | list | dict, **kwargs):
-        assert check_type(fill_value, [str, int, float, list, dict])
+        assert isinstance(fill_value, (str, int, float, list, dict))
         if isinstance(fill_value, str):
             assert fill_value in ["mean", "max", "min", "median"]
         super().__init__(**kwargs)
@@ -358,7 +372,7 @@ class ProcFillNa(BaseProc):
             self.fit_values = self.fill_value
         else:
             self.fit_values = self.fill_value
-        assert check_type(self.fit_values, [int, float, list, dict])
+        assert isinstance(self.fit_values, (int, float, list, dict))
     def call_main(self, input: pd.DataFrame | np.ndarray | pl.DataFrame):
         output = input # Don't use copy()
         if self.type_in == "pd":
@@ -407,7 +421,7 @@ class ProcFillNa(BaseProc):
 
 class ProcFillNaMinMaxRandomly(BaseProc):
     def __init__(self, add_value: int | float=1.0, **kwargs):
-        assert check_type(add_value, [int, float])
+        assert isinstance(add_value, (int, float))
         super().__init__(**kwargs)
         self.add_value  = add_value
         self.fit_values = None
@@ -441,7 +455,7 @@ class ProcFillNaMinMaxRandomly(BaseProc):
         return ins
 
 class ProcReplaceValue(BaseProc):
-    def __init__(self, replace_value: dict, columns: int | str | list[int | str]=None, **kwargs):
+    def __init__(self, replace_value: dict, columns: int | str | list[int | str] | None=None, **kwargs):
         assert isinstance(replace_value, dict) and len(replace_value) > 0
         super().__init__(**kwargs)
         # dict has 2 types
@@ -449,11 +463,11 @@ class ProcReplaceValue(BaseProc):
         if isinstance(list(replace_value.values())[0], dict):
             assert columns is None # No need to be set.
             for x, y in replace_value.items():
-                assert check_type(x, [int, str]) # x means col name or col index
-                assert check_type(y, dict)
+                assert isinstance(x, (int, str)) # x means col name or col index
+                assert isinstance(y, dict)
                 for a, b in y.items():
-                    assert check_type(a, [int, str, float])
-                    assert check_type(b, [int, str, float])
+                    assert isinstance(a, (int, str, float))
+                    assert isinstance(b, (int, str, float))
             self.is_dict_rep = True
         else:
             list_x = list(replace_value.keys())
@@ -463,7 +477,7 @@ class ProcReplaceValue(BaseProc):
                 (check_type_list(list_x, str)          and check_type_list(list_y, str, type(None)))
             )
         if columns is not None:
-            if check_type(columns, [int, str]): columns = [columns, ]
+            if isinstance(columns, (int, str)): columns = [columns, ]
             assert check_type_list(columns, [int, str])
         self.replace_value = replace_value
         self.columns       = columns
@@ -574,7 +588,7 @@ class ProcToValues(BaseProc):
     def fit_main(self, input: pd.DataFrame | pl.DataFrame):
         if self.type_in not in ["pd", "pl"]:
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
-        assert check_type(input, [pd.DataFrame, pl.DataFrame])
+        assert isinstance(input, (pd.DataFrame, pl.DataFrame))
     def call_main(self, input: pd.DataFrame | pl.DataFrame):
         output = input.to_numpy()
         return output
@@ -587,8 +601,8 @@ class ProcToValues(BaseProc):
 class ProcMap(BaseProc):
     def __init__(self, values: dict, column: int | str, fill_null: int | float | str=float("nan"), **kwargs):
         assert isinstance(values, dict) and len(values) > 0
-        assert check_type(column, [int, str])
-        assert check_type(fill_null, [int, float, str, type(None)])
+        assert isinstance(column, (int, str))
+        assert isinstance(fill_null, (int, float, str, type(None)))
         super().__init__(**kwargs)
         self.column    = column
         self.values    = values
@@ -768,7 +782,7 @@ class ProcCondition(BaseProc):
     def fit_main(self, input: pd.DataFrame | pl.DataFrame):
         if not self.type_in in ["pd", "pl"]:
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
-        assert check_type(input, [pd.DataFrame, pl.DataFrame])
+        assert isinstance(input, (pd.DataFrame, pl.DataFrame))
     def call_main(self, input: pd.DataFrame | pl.DataFrame):
         if self.type_in == "pd":
             ndf_bool = query(input, self.query_string)
@@ -839,4 +853,54 @@ class ProcEval(BaseProc):
     def from_dict(cls, dict_proc: dict):
         ins = cls(dict_proc["eval_string"])
         set_attributes(ins, dict_proc, ["__class__", "eval_string"])
+        return ins
+
+class ProcAutoCompleteColumns(BaseProc):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.schema = None
+    def __str__(self):
+        attrs_str = ', '.join(
+            (f'{k}={v!r}' if k != "schema" else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
+            if not k in COLS_NOT_DISP
+        )
+        return f'{self.__class__.__name__}({attrs_str})'
+    def fit_main(self, input: pd.DataFrame | pl.DataFrame):
+        if self.type_in not in ["pd", "pl"]:
+            raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
+        assert input.shape[0] > 0
+        if self.type_in == "pd":
+            self.schema = pl.from_pandas(input.iloc[:1]).schema.to_python().copy()
+        else:
+            self.schema = input.schema.to_python().copy()
+    def call_main(self, input: pd.DataFrame | pl.DataFrame):
+        if self.type_in == "pd":
+            output = None
+            for x, y in self.schema.items():
+                if x not in input.columns:
+                    if output is None:
+                        output = input.copy() # If a column is not in input, dataframe is copied.
+                    if y in [str, object]:
+                        output[x] = None
+                    elif y in [datetime.datetime, datetime.date]:
+                        output[x] = pd.NaT
+                    else:
+                        output[x] = float("nan")
+            if output is None:
+                output = input
+        else:
+            output = input
+            for x, y in self.schema.items():
+                if x not in output.columns:
+                    output = output.with_columns(pl.lit(None).alias(x).cast(y))
+        return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "schema": mask_values_for_json(self.schema),
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls()
+        ins.schema = unmask_values_for_json(dict_proc["schema"])
+        set_attributes(ins, dict_proc, ["__class__", "schema"])
         return ins
