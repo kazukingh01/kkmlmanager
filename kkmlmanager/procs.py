@@ -858,10 +858,11 @@ class ProcEval(BaseProc):
 class ProcAutoCompleteColumns(BaseProc):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.schema = None
+        self.columns = None
+        self.dtypes  = None
     def __str__(self):
         attrs_str = ', '.join(
-            (f'{k}={v!r}' if k != "schema" else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
+            (f'{k}={v!r}' if k not in ["columns", "dtypes"] else f'{k}={disp_columns(v)}') for k, v in vars(self).items()
             if not k in COLS_NOT_DISP
         )
         return f'{self.__class__.__name__}({attrs_str})'
@@ -870,37 +871,47 @@ class ProcAutoCompleteColumns(BaseProc):
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
         assert input.shape[0] > 0
         if self.type_in == "pd":
-            self.schema = pl.from_pandas(input.iloc[:1]).schema.to_python().copy()
+            dictwk = pl.from_pandas(input.iloc[:1]).schema.to_python().copy()
         else:
-            self.schema = input.schema.to_python().copy()
+            dictwk = input.schema.to_python().copy()
+        self.columns = [x for x, _ in dictwk.items()]
+        self.dtypes  = [y for _, y in dictwk.items()]
     def call_main(self, input: pd.DataFrame | pl.DataFrame):
+        df_schema = pl.DataFrame([self.columns, self.dtypes], schema={"colname": str, "dtype": object})
         if self.type_in == "pd":
-            output = None
-            for x, y in self.schema.items():
-                if x not in input.columns:
-                    if output is None:
-                        output = input.copy() # If a column is not in input, dataframe is copied.
-                    if y in [str, object]:
-                        output[x] = None
-                    elif y in [datetime.datetime, datetime.date]:
-                        output[x] = pd.NaT
-                    else:
-                        output[x] = float("nan")
-            if output is None:
-                output = input
+            columns = input.columns.tolist()
+        else:
+            columns = input.columns
+        df_schema = df_schema.join(
+            pl.DataFrame(columns, schema={"colname": str}).with_columns(pl.lit(True).alias("tmp")),
+            how="left", on="colname"
+        )
+        df_schema = df_schema.filter(df_schema["tmp"].is_null())
+        if self.type_in == "pd":
+            output = input.copy() # If a column is not in input, dataframe is copied.
+            for x, y in df_schema[["colname", "dtype"]].to_numpy():
+                if y in [str, object]:
+                    output[x] = None
+                elif y in [datetime.datetime, datetime.date]:
+                    output[x] = pd.NaT
+                else:
+                    output[x] = float("nan")
         else:
             output = input
-            for x, y in self.schema.items():
-                if x not in output.columns:
-                    output = output.with_columns(pl.lit(None).alias(x).cast(y))
-        return output
+            listwk = []
+            for x, y in df_schema[["colname", "dtype"]].to_numpy():
+                listwk.append(pl.lit(None).alias(x).cast(y))
+            output = output.with_columns(listwk)
+        return output[self.columns]
     def to_dict(self) -> dict:
         return super().to_dict() | {
-            "schema": mask_values_for_json(self.schema),
+            "columns": self.columns,
+            "dtypes":  mask_values_for_json(self.dtypes),
         }
     @classmethod
     def from_dict(cls, dict_proc: dict):
         ins = cls()
-        ins.schema = unmask_values_for_json(dict_proc["schema"])
-        set_attributes(ins, dict_proc, ["__class__", "schema"])
+        ins.columns = dict_proc["columns"]
+        ins.dtypes  = unmask_values_for_json(dict_proc["dtypes"])
+        set_attributes(ins, dict_proc, ["__class__", "columns", "dtypes"])
         return ins

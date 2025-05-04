@@ -460,8 +460,9 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
         return self
     
-    def proc_registry(self, dict_proc: dict | None=None):
+    def proc_registry(self, dict_proc: dict | None=None, is_auto_colslct: bool=True):
         self.logger.info("START")
+        assert isinstance(is_auto_colslct, bool)
         if dict_proc is None:
             if self.is_reg:
                 dict_proc = {
@@ -502,7 +503,7 @@ class MLManager:
             assert x in ["row", "exp", "ans"]
             assert check_type_list(y, str)
         self.proc_row = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=False)
-        self.proc_exp = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
+        self.proc_exp = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=is_auto_colslct)
         self.proc_ans = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=True)
         for _type in ["row", "exp", "ans"]:
             if _type in dict_proc:
@@ -541,7 +542,7 @@ class MLManager:
         assert isinstance(is_ans, bool)
         self.logger.info(f"proc call row: {is_row}")
         if is_row:
-            df, indexes = self.proc_row.fit(df, is_return_index=True)
+            df, indexes = self.proc_row(df, is_return_index=True)
         else:
             indexes = df.index.copy() if isinstance(df, pd.DataFrame) else np.arange(df.shape[0], dtype=int)
         self.logger.info(f"df shape: {df.shape}")
