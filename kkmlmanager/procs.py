@@ -866,6 +866,9 @@ class ProcAutoCompleteColumns(BaseProc):
             if not k in COLS_NOT_DISP
         )
         return f'{self.__class__.__name__}({attrs_str})'
+    def __call__(self, *args, **kwargs):
+        kwargs["is_check"] = False # to avoid "assert self.shape_in == input.columns"
+        return super().__call__(*args, **kwargs)
     def fit_main(self, input: pd.DataFrame | pl.DataFrame):
         if self.type_in not in ["pd", "pl"]:
             raise TypeError(f"{self.__class__.__name__}'s input must be pd.DataFrame or pl.DataFrame")
