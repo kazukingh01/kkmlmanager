@@ -232,6 +232,7 @@ def isotonic_regression_with_err(input_x: NdarrayWithErr, y_min: float=0.0, y_ma
     assert isinstance(input_x, NdarrayWithErr)
     assert input_x.ndim == 2
     assert isinstance(n_loop, int) and n_loop > 0
+    input_x.err = np.clip(input_x.err, min=1e-10, max=y_max)
     idx      = np.argsort(input_x.val, axis=-1)
     sorted_x = take_along_axis(input_x, idx, axis=-1)
     weight   = 1.0 / (sorted_x.err ** 2)
