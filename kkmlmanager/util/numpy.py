@@ -1,5 +1,6 @@
 import typing
 import numpy as np
+from scipy.stats import norm
 from functools import partial
 from joblib import Parallel, delayed
 from sklearn.isotonic import isotonic_regression
@@ -228,33 +229,37 @@ def take_along_axis(arr: np.ndarray | NdarrayWithErr, *args, **kwargs):
     else:
         return NdarrayWithErr(np.take_along_axis(arr.val, *args, **kwargs), np.take_along_axis(arr.err, *args, **kwargs))
 
-def isotonic_regression_with_err(input_x: NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_loop: int=20) -> np.ndarray:
+def isotonic_regression_with_err(input_x: NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_bins: int=100) -> np.ndarray:
     assert isinstance(input_x, NdarrayWithErr)
     assert input_x.ndim == 2
-    assert isinstance(n_loop, int) and n_loop > 0
+    assert isinstance(n_bins, int) and n_bins >= 10
     input_x.err = np.clip(input_x.err, min=1e-10, max=y_max)
     idx      = np.argsort(input_x.val, axis=-1)
     sorted_x = take_along_axis(input_x, idx, axis=-1)
     weight   = 1.0 / (sorted_x.err ** 2)
-    valret   = np.zeros_like(sorted_x.val)
-    gen      = np.random.Generator(np.random.PCG64(1)) # fix random seed.
-    random   = gen.standard_normal(n_loop * input_x.size).reshape(input_x.shape[0], n_loop, input_x.shape[1])
-    addnoise = sorted_x.val.reshape(input_x.shape[0], 1, input_x.shape[1]) + (random * sorted_x.err.reshape(input_x.shape[0], 1, input_x.shape[1]))
+    alpha    = norm.cdf(-2.0) # -2 sigma
+    beta     = norm.cdf(+2.0) # +2 sigma
+    x_p      = norm.ppf(alpha + (np.arange(1, n_bins + 1) - 0.5) * (beta - alpha) / n_bins)
+    x_p      = x_p.reshape(*([1,]*input_x.ndim + [-1,]))
+    reshaped = sorted_x.reshape(*(list(sorted_x.shape) + [1,]))
+    addnoise = reshaped.val + reshaped.err * x_p
     addnoise = np.clip(addnoise, min=y_min, max=y_max)
+    weight   = np.moveaxis(weight.repeat(n_bins).reshape(-1, weight.shape[1], n_bins), 2, 1).reshape(-1, weight.shape[1])
     vals     = [
         isotonic_regression(x, sample_weight=w, y_min=y_min, y_max=y_max)
-        for x, w in zip(addnoise.reshape(-1, input_x.shape[1]), np.tile(weight, (1, n_loop)).reshape(-1, input_x.shape[1]))
+        for x, w in zip(np.moveaxis(addnoise, 2, 1).reshape(-1, input_x.shape[1]), weight)
     ]
-    vals     = np.stack(vals).reshape(input_x.shape[0], n_loop, input_x.shape[1]).mean(axis=1)
+    vals     = np.stack(vals).reshape(-1, n_bins, input_x.shape[1]).mean(axis=1)
+    valret   = np.zeros_like(input_x.val, dtype=float)
     for i, _idx in enumerate(idx):
         valret[i, _idx] = vals[i]
     return valret
 
-def normalize(input_x: np.ndarray | NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_loop: int=20) -> np.ndarray:
+def normalize(input_x: np.ndarray | NdarrayWithErr, y_min: float=0.0, y_max: float=np.inf, n_bins: int=100) -> np.ndarray:
     assert isinstance(input_x, (np.ndarray, NdarrayWithErr))
     assert input_x.ndim == 2
     if isinstance(input_x, NdarrayWithErr):
-        output = isotonic_regression_with_err(input_x, y_min=y_min, y_max=y_max, n_loop=n_loop)
+        output = isotonic_regression_with_err(input_x, y_min=y_min, y_max=y_max, n_bins=n_bins)
     else:
         output = input_x
     return output / output.sum(axis=-1, keepdims=True)
