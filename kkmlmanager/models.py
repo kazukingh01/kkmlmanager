@@ -117,13 +117,14 @@ class MultiModel(BaseModel):
 
 
 class Calibrator(BaseModel):
-    def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False, calibmodel: str | int=None):
+    def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False, calibmodel: str | int=None, useerr: bool=True):
         LOGGER.info(f"START: {self.__class__.__name__}")
         assert isinstance(func_predict, str)
         assert hasattr(model, func_predict)
         assert isinstance(is_normalize, bool)
         assert isinstance(is_reg, bool)
         assert isinstance(calibmodel, (str, int))
+        assert isinstance(useerr, bool)
         if isinstance(calibmodel, int):
             assert calibmodel in [0, 1]
             calibmodel = ["MultiLabelRegressionWithError", "TemperatureScaling"][calibmodel]
@@ -143,10 +144,11 @@ class Calibrator(BaseModel):
         self.calibmodel    = calibmodel
         self.classes_      = None
         self.calib_fig     = None
+        self.useerr        = useerr
         super().__init__(func_predict, default_params_for_predict={"is_mock": False})
         LOGGER.info(f"END: {self.__class__.__name__}")
     def __str__(self):
-        return f"{self.__class__.__name__}(model={self.model}, calibrator={self.calibrator}, func_predict={self.func_predict}, is_normalize={self.is_normalize}, is_reg={self.is_reg}, calibmodel={self.calibmodel})"
+        return f"{self.__class__.__name__}(model={self.model}, calibrator={self.calibrator}, func_predict={self.func_predict}, is_normalize={self.is_normalize}, is_reg={self.is_reg}, calibmodel={self.calibmodel}, useerr={self.useerr})"
     def __repr__(self):
         return self.__str__()
     def to_dict(self, mode: int=0, savedir: str=None) -> dict:
@@ -163,6 +165,7 @@ class Calibrator(BaseModel):
             "is_normalize": self.is_normalize,
             "is_reg":       self.is_reg,
             "calibmodel":   self.calibmodel,
+            "useerr":       self.useerr,
             "classes_":     self.classes_.tolist() if self.classes_ is not None else None,
             "calib_fig": {
                 x: encode_object(y, mode={0:0,1:0,2:2}[mode]) for x, y in self.calib_fig.items()
@@ -180,7 +183,7 @@ class Calibrator(BaseModel):
             model = decode_object(model, basedir=basedir)
         ins = cls(
             model, dict_model["func_predict"], is_normalize=dict_model["is_normalize"],
-            is_reg=dict_model["is_reg"], calibmodel=dict_model["calibmodel"]
+            is_reg=dict_model["is_reg"], calibmodel=dict_model["calibmodel"], useerr=dict_model["useerr"]
         )
         _path, _cls    = dict_model["calibrator"]["__BaseModel__"].rsplit(".", 1)
         _cls: BaseCalibrator = getattr(importlib.import_module(_path), _cls)
@@ -240,6 +243,8 @@ class Calibrator(BaseModel):
         self.calibrator.fit(input_x, input_y)
         output = self._predict_common(input_x, is_mock=True)
         assert isinstance(output, (np.ndarray, NdarrayWithErr))
+        if not self.useerr and isinstance(output, NdarrayWithErr):
+            output = output.to_numpy()
         if not self.is_reg:
             if isinstance(output, NdarrayWithErr):
                 output = output.to_numpy()

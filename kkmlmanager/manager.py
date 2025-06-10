@@ -582,12 +582,12 @@ class MLManager:
     
     def set_post_model(
         self, is_cv: bool=False, calibmodel: int | str | None=None, is_calib_after_cv: bool=False, list_cv: list[int] | None=None, 
-        is_normalize: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame=None
+        is_normalize: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame | None=None, useerr: bool=True,
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
         self.logger.info(
             f"is_cv={is_cv}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, list_cv={list_cv}, " + 
-            f"is_normalize={is_normalize}, n_bins={n_bins}, df_calib={df_calib}"
+            f"is_normalize={is_normalize}, n_bins={n_bins}, df_calib={df_calib}, useerr={useerr}"
         )
         assert isinstance(is_cv, bool)
         assert isinstance(calibmodel, (int, type(None)))
@@ -607,12 +607,16 @@ class MLManager:
         if list_cv is None: list_cv = self.list_cv
         for x in list_cv: assert hasattr(self, f"model_cv{x}")
         assert isinstance(df_calib, (pd.DataFrame, pl.DataFrame, type(None)))
+        assert isinstance(useerr, bool)
         if is_cv:
             if is_calib_after_cv:
                 modelcv = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
                 if is_calib:
                     assert df_calib is not None
-                    modelcalib = Calibrator(modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, calibmodel=calibmodel)
+                    modelcalib = Calibrator(
+                        modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
+                        calibmodel=calibmodel, useerr=useerr
+                    )
                     input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
                     modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
                     self.model_post = modelcalib
@@ -623,7 +627,10 @@ class MLManager:
                     models = []
                     for x in list_cv:
                         self.logger.info(f"calibration for {x} ...")
-                        modelcalib = Calibrator(getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, calibmodel=calibmodel)
+                        modelcalib = Calibrator(
+                            getattr(self, f"model_cv{x}"), self.model_func, is_normalize=is_normalize, 
+                            calibmodel=calibmodel, useerr=useerr
+                        )
                         df         = getattr(self, f"eval_valid_df_cv{x}").copy()
                         input_x    = df.loc[:, df.columns.str.contains("^predict_proba_", regex=True)].to_numpy(dtype=float)
                         input_y    = df.loc[:, df.columns == "answer"].to_numpy().reshape(-1).astype(int)
@@ -637,7 +644,10 @@ class MLManager:
         else:
             if is_calib:
                 assert df_calib is not None
-                modelcalib = Calibrator(self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, calibmodel=calibmodel)
+                modelcalib = Calibrator(
+                    self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
+                    calibmodel=calibmodel, useerr=useerr
+                )
                 input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
                 modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
                 self.model_post = modelcalib
