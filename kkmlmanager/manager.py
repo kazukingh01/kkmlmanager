@@ -23,6 +23,10 @@ __all__ = [
 ]
 
 
+DATAFRAME:      type = pd.DataFrame | pl.DataFrame
+DATAFRAME_NONE: type = pd.DataFrame | pl.DataFrame | None
+
+
 class MLManager:
     """
     Usage::
@@ -279,9 +283,9 @@ class MLManager:
         self.logger.info(f"columns new: {self.columns.shape}, columns before:{self.columns_hist[-1].shape}")
         self.logger.info("END")
 
-    def cut_features_by_variance(self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float=0.99, ignore_nan: bool=False, n_divide: int=10000):
+    def cut_features_by_variance(self, df: DATAFRAME_NONE=None, cutoff: float=0.99, ignore_nan: bool=False, n_divide: int=10000):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df, DATAFRAME_NONE)
         assert isinstance(cutoff, float) and 0 < cutoff <= 1.0
         assert isinstance(ignore_nan, bool)
         self.logger.info(f"df: {df.shape if df is not None else None}, cutoff: {cutoff}, ignore_nan: {ignore_nan}")
@@ -298,6 +302,7 @@ class MLManager:
                 self.logger.info("END")
                 return None
         columns = sebool.index[~sebool].to_numpy(dtype=object)
+        assert len(columns) > 0, f"Increase cutoff: {cutoff} to keep at least one feature."
         if df is not None:
             columns_del = self.columns[~isin_compare_string(self.columns, columns)].copy()
             df_del = df.select(columns_del).fill_nan(None)
@@ -311,15 +316,15 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_correlation(
-        self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float | None=0.99, sample_size: int | None=None, dtype: str="float16", is_gpu: bool=False, 
+        self, df: DATAFRAME_NONE=None, cutoff: float | None=0.99, sample_size: int | None=None, dtype: str="float16", is_gpu: bool=False, 
         corr_type: str="pearson", batch_size: int=100, min_n: int=10, **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert df          is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df, DATAFRAME_NONE)
         assert cutoff      is None or (isinstance(cutoff,    float) and 0 < cutoff <= 1.0)
         assert sample_size is None or (isinstance(sample_size, int) and 0 < sample_size)
         assert dtype     in ["float16", "float32", "float64"]
-        assert corr_type in ["pearson", "spearman"]
+        assert corr_type in ["pearson", "spearman", "chatterjee"]
         sample_size = df.shape[0] if sample_size is None and df is not None else sample_size
         if df is not None:
             assert sample_size <= df.shape[0]
@@ -347,16 +352,17 @@ class MLManager:
                 index = np.where((sewk > cutoff) | (sewk < -cutoff))[0][0]
                 self.logger.info(f"feature: {x}, compare: {sewk.index[index]}, corr: {sewk.iloc[index]}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            assert len(columns) > 0, f"Increase cutoff: {cutoff} to keep at least one feature."
             self.update_features(columns)
         else:
             self.logger.info(f"cutoff is not set so no updated columns.")
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_randomtree_importance(
-        self, df: pd.DataFrame | pl.DataFrame | None=None, cutoff: float | None=0.9, max_iter: int=1, min_count: int=100, dtype="float32", **kwargs
+        self, df: DATAFRAME_NONE=None, cutoff: float | None=0.9, max_iter: int=1, min_count: int=100, dtype="float32", **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert df is None or isinstance(df, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df, DATAFRAME_NONE)
         assert cutoff is None or isinstance(cutoff, float) and 0 < cutoff <= 1.0
         assert isinstance(max_iter,  int) and max_iter  > 0
         assert isinstance(min_count, int) and min_count > 0
@@ -385,18 +391,19 @@ class MLManager:
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
             for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_treeimp.loc[x, 'ratio']}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            assert len(columns) > 0, f"Increase cutoff: {cutoff} to keep at least one feature."
             self.update_features(columns)
         else:
             self.logger.info(f"cutoff is not set so no updated columns.")
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def cut_features_by_adversarial_validation(
-        self, df_train: pd.DataFrame | pl.DataFrame | None=None, df_test: pd.DataFrame | pl.DataFrame | None=None,
+        self, df_train: DATAFRAME_NONE=None, df_test: DATAFRAME_NONE=None,
         cutoff: int | float | None=None, thre_count: int | str="mean", n_split: int=5, n_cv: int=5, dtype: str="float32", **kwargs
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert df_train is None or isinstance(df_train, (pd.DataFrame, pl.DataFrame))
-        assert df_test  is None or isinstance(df_test,  (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df_train, DATAFRAME_NONE)
+        assert isinstance(df_test,  DATAFRAME_NONE)
         assert type(df_train) == type(df_test)
         assert cutoff is None or isinstance(cutoff, (int, float)) and 0 <= cutoff
         assert thre_count is not None and (isinstance(thre_count, str) or isinstance(thre_count, int))
@@ -437,6 +444,7 @@ class MLManager:
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
             for x in columns_del: self.logger.info(f"feature: {x}, ratio: {df_adv.loc[x, 'ratio']}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
+            assert len(columns) > 0, f"Increase cutoff: {cutoff} to keep at least one feature."
             self.update_features(columns)
         else:
             self.logger.info(f"cutoff is not set so no updated columns.")
@@ -451,12 +459,15 @@ class MLManager:
             "self.cut_features_by_adversarial_validation(df, df_test, cutoff=None, thre_count='mean', n_split=3, n_cv=2, dtype=np.float32, batch_size=25)",
             "self.cut_features_by_correlation(df, cutoff=0.99, dtype='float16', is_gpu=True, corr_type='pearson',  batch_size=2000, min_n=100)",
             "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='spearman', batch_size=500,  min_n=100)",
-            "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
+            "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='chatterjee', batch_size=500,  min_n=100)",
+            # "self.cut_features_by_correlation(df, cutoff=None, dtype='float16', is_gpu=True, corr_type='kendall',  batch_size=500,  min_n=50, n_sample=250, n_iter=2)",
         ]
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
         for proc in list_proc:
-            eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test, "np": np, "pd": pd})
+            _out = eval(proc, {}, {"self": self, "df": df, "df_train": df, "df_test": df_test, "np": np, "pd": pd})
+            if _out is not None:
+                self.logger.info(f"output: {_out}")
         self.logger.info("END", color=["GREEN", "BOLD"])
         return self
     
@@ -512,9 +523,9 @@ class MLManager:
         self.proc_check_init()
         self.logger.info("END")
     
-    def proc_fit(self, df: pd.DataFrame | pl.DataFrame, is_row: bool=True, is_exp: bool=True, is_ans: bool=True):
+    def proc_fit(self, df: DATAFRAME, is_row: bool=True, is_exp: bool=True, is_ans: bool=True):
         self.logger.info("START")
-        assert isinstance(df, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df, DATAFRAME)
         assert isinstance(is_row, bool)
         assert isinstance(is_exp, bool)
         assert isinstance(is_ans, bool)
@@ -565,14 +576,14 @@ class MLManager:
         self.logger.info("END")
     
     def predict(
-        self, df: pd.DataFrame | pl.DataFrame | None=None, input_x: np.ndarray | None=None,
+        self, df: DATAFRAME_NONE=None, input_x: np.ndarray | None=None,
         is_row: bool=False, is_exp: bool=True, is_ans: bool=False, **kwargs
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self.logger.info("START", color=["GREEN", "BOLD"])
         self.logger.info(f"kwargs: {kwargs}")
         assert is_exp
         if input_x is None:
-            assert isinstance(df, (pd.DataFrame, pl.DataFrame))
+            assert isinstance(df, DATAFRAME)
             input_x, input_y, input_index = self.proc_call(df, is_row=is_row, is_exp=is_exp, is_ans=is_ans)
         else:
             input_y, input_index = None, None
@@ -582,7 +593,7 @@ class MLManager:
     
     def set_post_model(
         self, is_cv: bool=False, calibmodel: int | str | None=None, is_calib_after_cv: bool=False, list_cv: list[int] | None=None, 
-        is_normalize: bool=False, n_bins: int=None, df_calib: pd.DataFrame | pl.DataFrame | None=None, useerr: bool=True,
+        is_normalize: bool=False, n_bins: int=None, df_calib: DATAFRAME_NONE=None, useerr: bool=True,
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
         self.logger.info(
@@ -606,7 +617,7 @@ class MLManager:
         assert n_bins is None or isinstance(n_bins, int)
         if list_cv is None: list_cv = self.list_cv
         for x in list_cv: assert hasattr(self, f"model_cv{x}")
-        assert isinstance(df_calib, (pd.DataFrame, pl.DataFrame, type(None)))
+        assert isinstance(df_calib, DATAFRAME_NONE)
         assert isinstance(useerr, bool)
         if is_cv:
             if is_calib_after_cv:
@@ -669,7 +680,7 @@ class MLManager:
         return getattr(self, model_mode)
 
     def fit(
-        self, df_train: pd.DataFrame | pl.DataFrame, df_valid: pd.DataFrame | pl.DataFrame=None, is_proc_fit: bool=True, 
+        self, df_train: DATAFRAME, df_valid: DATAFRAME_NONE=None, is_proc_fit: bool=True, 
         params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False, dict_extra_cols: dict[str, str]=None,
     ):
         """
@@ -682,8 +693,8 @@ class MLManager:
             >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
         """
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
-        if df_valid is not None: assert isinstance(df_valid, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df_train, DATAFRAME)
+        assert isinstance(df_valid, DATAFRAME_NONE)
         for x in self.columns_oth:
             assert np.any(np.array(df_train.columns, dtype=object) == x)
             if df_valid is not None: assert np.any(np.array(df_valid.columns, dtype=object) == x)
@@ -770,7 +781,7 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
 
     def fit_cross_validation(
-        self, df_train: pd.DataFrame | pl.DataFrame,
+        self, df_train: DATAFRAME,
         n_split: int | None=None, n_cv: int | None=None, mask_split: np.ndarray | None=None,
         cols_multilabel_split: list[str] | None=None, group_split: str | list[str] | None=None,
         indexes_train: list[np.ndarray] | None=None, indexes_valid: list[np.ndarray] | None=None,
@@ -796,7 +807,7 @@ class MLManager:
             >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
         """
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df_train, DATAFRAME)
         assert isinstance(is_proc_fit_every_cv, bool)
         assert isinstance(is_save_cv_models, bool)
         if n_split is None:
@@ -910,13 +921,13 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
     
     def fit_basic_treemodel(
-        self, df_train: pd.DataFrame | pl.DataFrame, df_valid: pd.DataFrame | pl.DataFrame=None, df_test: pd.DataFrame | pl.DataFrame=None,
+        self, df_train: DATAFRAME, df_valid: DATAFRAME_NONE=None, df_test: DATAFRAME_NONE=None,
         ncv: int=2, n_estimators: int=100, model_kwargs: dict={}
     ):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert isinstance(df_train, (pd.DataFrame, pl.DataFrame))
-        assert isinstance(df_valid, (pd.DataFrame, pl.DataFrame)) or df_valid is None
-        assert isinstance(df_test,  (pd.DataFrame, pl.DataFrame)) or df_test  is None
+        assert isinstance(df_train, DATAFRAME)
+        assert isinstance(df_valid, DATAFRAME_NONE)
+        assert isinstance(df_test,  DATAFRAME_NONE)
         assert isinstance(ncv,          int) and ncv >= 1
         assert isinstance(n_estimators, int) and n_estimators >= 2
         assert not (ncv == 1 and df_valid is None)
@@ -946,9 +957,9 @@ class MLManager:
             self.evaluate(df_test, is_store=True)
         self.logger.info("END", color=["GREEN", "BOLD"])
     
-    def evaluate(self, df_test: pd.DataFrame | pl.DataFrame, columns_ans: str | np.ndarray | None=None, is_store: bool=False, **kwargs):
+    def evaluate(self, df_test: DATAFRAME, columns_ans: str | np.ndarray | None=None, is_store: bool=False, **kwargs):
         self.logger.info("START", color=["GREEN", "BOLD"])
-        assert isinstance(df_test, (pd.DataFrame, pl.DataFrame))
+        assert isinstance(df_test, DATAFRAME)
         if columns_ans is not None:
             assert isinstance(columns_ans, (str, np.ndarray))
             if isinstance(columns_ans, str):

@@ -330,7 +330,7 @@ def corr_coef_pearson_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: st
     LOGGER.info("END")
     return tens_corr.cpu().numpy()
 
-def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is_to_rank: bool=True, dtype=np.float32, min_n: int=10, chunk_size: int=10000) -> np.ndarray:
+def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is_to_rank: bool=True, dtype=np.float32, min_n: int=10) -> np.ndarray:
     """
     When calculating the Spearman correlation coefficient with NaN values, rankings should be done on the values excluding the NaNs.
     However, calculating this between columns is too slow. Therefore, I first normalize the values to a 0-1 range and 
@@ -384,8 +384,8 @@ def corr_coef_spearman_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank
     if not is_gpu: LOGGER.warning("Note that the calculation is 'very SLOW'.")
     device = "cuda:0" if is_gpu else "cpu"
     if is_to_rank:
-        df_x = df_x.with_columns(pl.all().rank(method="random"))
-        df_y = df_y.with_columns(pl.all().rank(method="random"))
+        df_x = df_x.fill_nan(None).with_columns(pl.all().rank(method="random"))
+        df_y = df_y.fill_nan(None).with_columns(pl.all().rank(method="random"))
     input_x, input_y = df_x.to_numpy(), df_y.to_numpy()
     assert len(input_x.shape) == len(input_y.shape) == 2
     assert input_x.shape[0] == input_y.shape[0]
@@ -530,6 +530,54 @@ def corr_coef_kendall_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dty
     LOGGER.info("END")
     return ndf_corr
 
+def corr_coef_chatterjee_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank: bool=True, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
+    LOGGER.info("START")
+    assert isinstance(df_x, pl.DataFrame)
+    assert isinstance(df_y, pl.DataFrame)
+    assert isinstance(is_to_rank, bool)
+    assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
+    assert isinstance(min_n, int) and min_n >= 0
+    assert isinstance(is_gpu, bool)
+    if not is_gpu: LOGGER.warning("Note that the calculation is 'very SLOW'.")
+    device = "cuda:0" if is_gpu else "cpu"
+    if is_to_rank:
+        df_x = df_x.fill_nan(None).with_columns(pl.all().rank(method="random"))
+        df_y = df_y.fill_nan(None).with_columns(pl.all().rank(method="random"))
+    input_x, input_y = df_x.to_numpy(), df_y.to_numpy()
+    assert len(input_x.shape) == len(input_y.shape) == 2
+    assert input_x.shape[0] == input_y.shape[0]
+    assert input_x.shape[1] >= input_y.shape[1]
+    tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y_tmp   = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+    tens_y       = torch.zeros_like(tens_x, dtype=getattr(torch, dtype), device=device)
+    tens_y[:, :tens_y_tmp.shape[1]] = tens_y_tmp
+    tens_x_nonan = ~torch.isnan(tens_x)
+    tens_y_nonan = ~torch.isnan(tens_y)
+    # to rank
+    tens_corr = torch.zeros(tens_x.shape[1], tens_y.shape[1], dtype=torch.float32, device=tens_x.device)
+    tens_eye  = torch.eye(  tens_x.shape[1], tens_y.shape[1], dtype=bool,          device=tens_x.device)
+    col       = torch.arange(tens_y.size(1), device=tens_y.device).view(1, -1).expand_as(tens_y)
+    for i in np.arange(tens_x.shape[1]):
+        tens_roll = torch.roll(tens_x, i, 1)
+        tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
+        tens_trgt = tens_y.clone()
+        tens_trgt[~tens_bool] = float("nan")
+        tens_trgt = 3.0 * tens_trgt / (torch.pow(tens_bool.sum(dim=0), 2) - 1) # scale first
+        tens_idx  = torch.sort(tens_roll, dim=0).indices
+        tens_trgt = tens_trgt.gather(dim=0, index=tens_idx)
+        mask      = ~torch.isnan(tens_trgt)
+        pos       = mask.cumsum(0) - 1
+        tens_sort = torch.full_like(tens_trgt, float("nan"), dtype=tens_trgt.dtype, device=tens_trgt.device)
+        tens_sort[pos[mask], col[mask]] = tens_trgt[mask]
+        tens_diff = tens_sort[:-1, :] - tens_sort[1:, :]
+        tens_diff[torch.isnan(tens_diff)] = 0.0
+        tenswk    = 1 - torch.abs(tens_diff).sum(dim=0)
+        tens_corr[torch.roll(tens_eye, i, 1)] = torch.roll(tenswk, -i, 0)
+    tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
+    tens_corr[tens_nonan < min_n] = float("nan")
+    LOGGER.info("END")
+    return tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
+
 def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: bool=False, corr_type: str="pearson", batch_size: int=100, min_n: int=10, n_jobs: int=1, **kwargs) -> pd.DataFrame:
     """
     Normal numpy pr polars corr method cannot consider Nan. So custom function is used in this code.
@@ -538,7 +586,7 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
     assert isinstance(df, pl.DataFrame)
     assert isinstance(is_gpu, bool)
     assert isinstance(dtype, str) and dtype in ["float16", "float32", "float64"]
-    assert isinstance(corr_type, str) and corr_type in ["pearson", "spearman", "kendall"]
+    assert isinstance(corr_type, str) and corr_type in ["pearson", "spearman", "kendall", "chatterjee"]
     assert isinstance(min_n,      int) and min_n > 0
     assert isinstance(batch_size, int) and batch_size >= 1
     assert isinstance(n_jobs,     int) and n_jobs >= 1
@@ -552,7 +600,10 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
     df = df.with_columns(pl.all().cast({"float16": pl.Float32, "float32": pl.Float32, "float64": pl.Float64}[dtype]))
     if corr_type == "spearman":
         assert df.shape[0] <= 100000 # if n data is large, the calculation is explode
-        df = df.with_columns(pl.all().rank(method='random'))
+        df = df.fill_nan(None).with_columns(pl.all().rank(method='random'))
+    elif corr_type == "chatterjee":
+        assert df.shape[0] <= 1000000 # if n data is large, the calculation is explode
+        df = df.fill_nan(None).with_columns(pl.all().rank(method='random'))
     if is_gpu:
         LOGGER.info(f"calculate correlation [GPU] corr_type: {corr_type}...")
         n_iter = int(((len(batch) ** 2 - len(batch)) / 2) + len(batch))
@@ -570,6 +621,8 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
                 elif corr_type == "kendall":
                     dictwk = {x:y for x, y in kwargs.items() if x in ["n_sample", "n_iter"]}
                     ndf_corr = corr_coef_kendall_2array(input_x, input_y, dtype=dtype, min_n=min_n, is_gpu=is_gpu, **dictwk)
+                elif corr_type == "chatterjee":
+                    ndf_corr = corr_coef_chatterjee_2array(df_x, df_y, is_to_rank=False, dtype=dtype, min_n=min_n, is_gpu=is_gpu)
                 df_corr.iloc[batch_x, batch_y] = ndf_corr
     else:
         LOGGER.info(f"calculate correlation [CPU] corr_type: {corr_type}...")
@@ -583,6 +636,12 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
             func1    = partial(corr_coef_spearman_2array_numpy, is_to_rank=False, dtype=getattr(np, dtype), min_n=min_n)
             list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
                 delayed(lambda x, y, z: (z, func1(x, y)))(df[:, batch_x].to_numpy(), df[:, batch_y].to_numpy(), (batch_x, batch_y))
+                for i, batch_x in enumerate(batch) for batch_y in batch[i:]
+            ])
+        elif corr_type == "chatterjee":
+            func1    = partial(corr_coef_chatterjee_2array, is_to_rank=False, dtype=dtype, min_n=min_n, is_gpu=False)
+            list_obj = Parallel(n_jobs=n_jobs, backend="loky", verbose=10)([
+                delayed(lambda x, y, z: (z, func1(x, y)))(df[:, batch_x], df[:, batch_y], (batch_x, batch_y))
                 for i, batch_x in enumerate(batch) for batch_y in batch[i:]
             ])
         else:

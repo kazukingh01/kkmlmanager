@@ -53,8 +53,34 @@ if __name__ == "__main__":
             'col_sqrt', 'col_pw2', 'col_pw3', 'col_log'], dtype='<U8')
     """
 
+    # cut features by valiance
+    manager.cut_features_by_variance(df, cutoff=0.8, ignore_nan=False, n_divide=1000)
+    """
+    >>> manager.columns
+    array([ 'col_0', 'col_1', 'col_2', 'col_3', 'col_4', 'col_5', 'col_6',
+            'col_7', 'col_8', 'col_9', 'col_sqrt', 'col_pw2', 'col_pw3',
+            'col_log'], dtype=object)
+    >>> manager.features_var_False_08
+    col_0       False
+    col_1       False
+    col_2       False
+    col_3       False
+    col_4       False
+    col_5       False
+    col_6       False
+    col_7       False
+    col_8       False
+    col_9       False
+    col_nan2     True
+    col_sqrt    False
+    col_pw2     False
+    col_pw3     False
+    col_log     False
+    dtype: bool
+    """
+
     # cut features by valiance ( except nan )
-    manager.cut_features_by_variance(df, cutoff=0.8, ignore_nan=True, batch_size=5)
+    manager.cut_features_by_variance(df, cutoff=0.8, ignore_nan=True, n_divide=1000)
     """
     >>> manager.columns
     array([ 'col_0', 'col_1', 'col_2', 'col_3', 'col_4', 'col_5', 'col_6',
@@ -81,32 +107,6 @@ if __name__ == "__main__":
     dtype: bool
     """    
 
-    # cut features by valiance
-    manager.cut_features_by_variance(df, cutoff=0.8, ignore_nan=False, batch_size=5)
-    """
-    >>> manager.columns
-    array([ 'col_0', 'col_1', 'col_2', 'col_3', 'col_4', 'col_5', 'col_6',
-            'col_7', 'col_8', 'col_9', 'col_sqrt', 'col_pw2', 'col_pw3',
-            'col_log'], dtype=object)
-    >>> manager.features_var_False_08
-    col_0       False
-    col_1       False
-    col_2       False
-    col_3       False
-    col_4       False
-    col_5       False
-    col_6       False
-    col_7       False
-    col_8       False
-    col_9       False
-    col_nan2     True
-    col_sqrt    False
-    col_pw2     False
-    col_pw3     False
-    col_log     False
-    dtype: bool
-    """
-
     # cut features by correltion ( pearson )
     manager.cut_features_by_correlation(df, cutoff=0.95, sample_size=None, dtype="float32", is_gpu=False, corr_type="pearson",  batch_size=1)
     """
@@ -132,7 +132,11 @@ if __name__ == "__main__":
     """
 
     # cut features by correltion ( spearman ). GPU only
-    # manager.cut_features_by_correlation(df, cutoff=0.95, sample_size=None, dtype="float32", is_gpu=True, corr_type="spearman", batch_size=1)
+    try: import torch
+    except ImportError: torch = None
+    if torch is not None and torch.cuda.is_available():
+        manager.cut_features_by_correlation(df, cutoff=0.95, sample_size=None, dtype="float32", is_gpu=True, corr_type="spearman",   batch_size=1)
+        manager.cut_features_by_correlation(df, cutoff=0.95, sample_size=None, dtype="float32", is_gpu=True, corr_type="chatterjee", batch_size=1)
     # cut features by adversarial validation
     df_test = df.copy()
     df_test.loc[:, manager.columns[0]] += 1
