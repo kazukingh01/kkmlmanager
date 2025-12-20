@@ -400,20 +400,25 @@ def corr_coef_spearman_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank
     tens_y       = tens_y / tens_y_nonan.sum(dim=0)
     tens_x[~tens_x_nonan] = 0
     tens_y[~tens_y_nonan] = 0
-    # to rank
-    tens_corr = torch.zeros(tens_x.shape[1], tens_y.shape[1]).to(torch.float32).to(device)
-    tens_eye  = torch.eye(  tens_x.shape[1], tens_y.shape[1]).to(bool).to(device)
+    N         = tens_x.shape[1]  # == tens_y.shape[1]
+    rows      = torch.arange(N, device=tens_x.device)
+    base      = rows * N
+    tens_corr = torch.zeros(N, N, dtype=torch.float32, device=tens_x.device).view(-1)
     for i in np.arange(tens_x.shape[1]):
         tens_diff = torch.roll(tens_x,       i, 1) - tens_y
         tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
         tens_diff[~tens_bool] = 0
         tens_n = tens_bool.sum(dim=0)
-        tenswk = 1 - ((tens_diff.pow(2).sum(dim=0) * 6) / (tens_n - (1/tens_n)))
-        tens_corr[torch.roll(tens_eye, i, 1)] = torch.roll(tenswk, -i, 0)
+        tenswk = 1.0 - ((tens_diff.pow(2).sum(dim=0) * 6.0) / (tens_n - (1.0/tens_n)))
+        cols       = (rows + i) % N # (row, col) = (r, (r+i)%N)
+        lin        = base + cols    # flatten index
+        tens_corr.index_copy_(0, lin, tenswk[cols])
+    tens_corr  = tens_corr.view(N, N)
     tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
     tens_corr[tens_nonan < min_n] = float("nan")
+    tens_corr  = tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
     LOGGER.info("END")
-    return tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
+    return tens_corr
 
 def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", n_sample: int=1000, n_iter: int=1, min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     LOGGER.info("START")
@@ -547,36 +552,50 @@ def corr_coef_chatterjee_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_ra
     assert len(input_x.shape) == len(input_y.shape) == 2
     assert input_x.shape[0] == input_y.shape[0]
     assert input_x.shape[1] >= input_y.shape[1]
-    tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
-    tens_y_tmp   = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
-    tens_y       = torch.zeros_like(tens_x, dtype=getattr(torch, dtype), device=device)
-    tens_y[:, :tens_y_tmp.shape[1]] = tens_y_tmp
-    tens_x_nonan = ~torch.isnan(tens_x)
-    tens_y_nonan = ~torch.isnan(tens_y)
-    # to rank
-    tens_corr = torch.zeros(tens_x.shape[1], tens_y.shape[1], dtype=torch.float32, device=tens_x.device)
-    tens_eye  = torch.eye(  tens_x.shape[1], tens_y.shape[1], dtype=bool,          device=tens_x.device)
-    col       = torch.arange(tens_y.size(1), device=tens_y.device).view(1, -1).expand_as(tens_y)
-    for i in np.arange(tens_x.shape[1]):
-        tens_roll = torch.roll(tens_x, i, 1)
-        tens_bool = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
-        tens_trgt = tens_y.clone()
-        tens_trgt[~tens_bool] = float("nan")
-        tens_trgt = 3.0 * tens_trgt / (torch.pow(tens_bool.sum(dim=0), 2) - 1) # scale first
-        tens_idx  = torch.sort(tens_roll, dim=0).indices
-        tens_trgt = tens_trgt.gather(dim=0, index=tens_idx)
-        mask      = ~torch.isnan(tens_trgt)
-        pos       = mask.cumsum(0) - 1
-        tens_sort = torch.full_like(tens_trgt, float("nan"), dtype=tens_trgt.dtype, device=tens_trgt.device)
-        tens_sort[pos[mask], col[mask]] = tens_trgt[mask]
-        tens_diff = tens_sort[:-1, :] - tens_sort[1:, :]
-        tens_diff[torch.isnan(tens_diff)] = 0.0
-        tenswk    = 1 - torch.abs(tens_diff).sum(dim=0)
-        tens_corr[torch.roll(tens_eye, i, 1)] = torch.roll(tenswk, -i, 0)
-    tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
-    tens_corr[tens_nonan < min_n] = float("nan")
+    with torch.inference_mode():
+        tens_x       = torch.from_numpy(input_x.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+        tens_y_tmp   = torch.from_numpy(input_y.astype(getattr(np, dtype))).to(getattr(torch, dtype)).to(device)
+        tens_y       = torch.zeros_like(tens_x, dtype=getattr(torch, dtype), device=device)
+        tens_y[:, :tens_y_tmp.shape[1]] = tens_y_tmp
+        tens_x_nonan = ~torch.isnan(tens_x)
+        tens_y_nonan = ~torch.isnan(tens_y)
+        N         = tens_x.shape[1]  # == tens_y.shape[1]
+        tens_sort = torch.zeros_like(tens_y, dtype=torch.float32, device=tens_y.device)
+        tens_cnt  = torch.zeros_like(tens_y, dtype=torch.float32, device=tens_y.device)
+        tens_trgt = torch.empty_like(tens_y, dtype=tens_y.dtype,  device=tens_y.device)
+        nan       = float("nan")
+        rows      = torch.arange(N, device=tens_x.device)
+        base      = rows * N
+        tens_corr = torch.zeros(N, N, dtype=torch.float32, device=tens_x.device).view(-1)
+        for i in range(tens_x.shape[1]):
+            tens_roll  = torch.roll(tens_x, i, 1)
+            tens_bool  = torch.roll(tens_x_nonan, i, 1) & tens_y_nonan
+            tens_trgt.copy_(tens_y)
+            tens_trgt.masked_fill_(~tens_bool, nan)
+            tens_trgt  = 3.0 * tens_trgt / (torch.pow(tens_bool.sum(dim=0), 2) - 1) # scale first
+            tens_idx   = torch.sort(tens_roll, dim=0).indices
+            tens_trgt  = tens_trgt.gather(dim=0, index=tens_idx) # tens_roll's nan goes to last
+            mask_nonan = ~torch.isnan(tens_trgt)
+            pos        = mask_nonan.cumsum(0) - 1
+            pos0       = pos.clamp_min(0)
+            tens_sort.zero_() # re-use tensor
+            tens_cnt.zero_()  # re-use tensor
+            tens_src   = torch.where(mask_nonan, tens_trgt, 0.0) # pos0 は nan がある箇所は index が同値で連続しており、それが連続で足されるため、nan は 0 にしておく必要がある
+            tens_sort.scatter_add_(0, pos0, tens_src) # scatter_add_ は pos0 の index に tens_src を加算していく. 
+            tens_cnt.scatter_add_(0,  pos0, mask_nonan.to(torch.float32))
+            tens_sort.masked_fill_(tens_cnt == 0, nan)
+            tens_diff = tens_sort[:-1, :] - tens_sort[1:, :]
+            tens_diff.masked_fill_(torch.isnan(tens_diff), 0)
+            tenswk     = 1 - torch.abs(tens_diff).sum(dim=0)
+            cols       = (rows + i) % N # (row, col) = (r, (r+i)%N)
+            lin        = base + cols    # flatten index
+            tens_corr.index_copy_(0, lin, tenswk[cols])
+        tens_corr  = tens_corr.view(N, N)
+        tens_nonan = torch.mm(tens_x_nonan.t().to(torch.float), tens_y_nonan.to(torch.float))
+        tens_corr[tens_nonan < min_n] = nan
+        tens_corr  = tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
     LOGGER.info("END")
-    return tens_corr[:, :tens_y_tmp.shape[1]].cpu().numpy()
+    return tens_corr
 
 def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: bool=False, corr_type: str="pearson", batch_size: int=100, min_n: int=10, n_jobs: int=1, **kwargs) -> pd.DataFrame:
     """
@@ -598,11 +617,8 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
         batch = np.array_split(np.arange(df.shape[1]), df.shape[1] // batch_size)
     LOGGER.info("convert to astype...")
     df = df.with_columns(pl.all().cast({"float16": pl.Float32, "float32": pl.Float32, "float64": pl.Float64}[dtype]))
-    if corr_type == "spearman":
+    if corr_type in ["spearman", "chatterjee"]:
         assert df.shape[0] <= 100000 # if n data is large, the calculation is explode
-        df = df.fill_nan(None).with_columns(pl.all().rank(method='random'))
-    elif corr_type == "chatterjee":
-        assert df.shape[0] <= 1000000 # if n data is large, the calculation is explode
         df = df.fill_nan(None).with_columns(pl.all().rank(method='random'))
     if is_gpu:
         LOGGER.info(f"calculate correlation [GPU] corr_type: {corr_type}...")
@@ -623,7 +639,7 @@ def get_features_by_correlation(df: pl.DataFrame, dtype: str="float16", is_gpu: 
                     ndf_corr = corr_coef_kendall_2array(input_x, input_y, dtype=dtype, min_n=min_n, is_gpu=is_gpu, **dictwk)
                 elif corr_type == "chatterjee":
                     ndf_corr = corr_coef_chatterjee_2array(df_x, df_y, is_to_rank=False, dtype=dtype, min_n=min_n, is_gpu=is_gpu)
-                df_corr.iloc[batch_x, batch_y] = ndf_corr
+                df_corr.iloc[batch_x, batch_y] = ndf_corr.copy()
     else:
         LOGGER.info(f"calculate correlation [CPU] corr_type: {corr_type}...")
         if corr_type == "pearson":
