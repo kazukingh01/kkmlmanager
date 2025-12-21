@@ -345,11 +345,17 @@ class MLManager:
             except AttributeError:
                 self.logger.raise_error(f"{attr_name} is not found. Run '{sys._getframe().f_code.co_name}' first.", exception=AttributeError())
         if cutoff is not None:
-            columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].to_numpy(dtype=object)
+            if corr_type == "chatterjee":
+                columns_del = df_corr.columns[(df_corr > cutoff).sum(axis=0) > 0].to_numpy(dtype=object)
+            else:
+                columns_del = df_corr.columns[((df_corr > cutoff) | (df_corr < -cutoff)).sum(axis=0) > 0].to_numpy(dtype=object)
             columns_del = self.columns[isin_compare_string(self.columns, columns_del)]
             for x in columns_del:
                 sewk  = df_corr.loc[:, x].copy()
-                index = np.where((sewk > cutoff) | (sewk < -cutoff))[0][0]
+                if corr_type == "chatterjee":
+                    index = np.where(sewk > cutoff)[0][0]
+                else:
+                    index = np.where((sewk > cutoff) | (sewk < -cutoff))[0][0]
                 self.logger.info(f"feature: {x}, compare: {sewk.index[index]}, corr: {sewk.iloc[index]}")
             columns = self.columns[~isin_compare_string(self.columns, columns_del)]
             assert len(columns) > 0, f"Increase cutoff: {cutoff} to keep at least one feature."

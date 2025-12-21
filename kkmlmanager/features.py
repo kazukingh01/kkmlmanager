@@ -560,7 +560,7 @@ def corr_coef_chatterjee_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_ra
         tens_x_nonan = ~torch.isnan(tens_x)
         tens_y_nonan = ~torch.isnan(tens_y)
         N         = tens_x.shape[1]  # == tens_y.shape[1]
-        tens_sort = torch.zeros_like(tens_y, dtype=torch.float32, device=tens_y.device)
+        tens_sort = torch.zeros_like(tens_y, dtype=tens_y.dtype,  device=tens_y.device)
         tens_cnt  = torch.zeros_like(tens_y, dtype=torch.float32, device=tens_y.device)
         tens_trgt = torch.empty_like(tens_y, dtype=tens_y.dtype,  device=tens_y.device)
         nan       = float("nan")
