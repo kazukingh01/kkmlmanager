@@ -691,12 +691,8 @@ class MLManager:
     ):
         """
         params_fit:
-            This is used like ...
-            >>> model.fit(train_x, train_y, **params_fit)'
-        params_fit_evaldict:
-            This is used like ...
-            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
-            >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
+            Below are preserved keys. "_train_XXXXX" is basically used for sample weight.
+            "_validation_x", "_validation_y", "_train_XXXXX", "_valid_XXXXX"
         """
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert isinstance(df_train, DATAFRAME)
@@ -737,6 +733,9 @@ class MLManager:
                     dict_extra[f"_train_{y}"] = df_train.loc[train_index, x].to_numpy().copy()
                     if df_valid is not None:
                         dict_extra[f"_valid_{y}"] = df_valid.loc[valid_index, x].to_numpy().copy()
+                self.logger.info(f"created extra parameter: _train_{y}")
+                if df_valid is not None:
+                    self.logger.info(f"created extra parameter: _valid_{y}")
         # update params_fit_evaldict
         assert isinstance(params_fit_evaldict, dict)
         params_fit_evaldict = copy.deepcopy(params_fit_evaldict) | dict_extra
@@ -809,7 +808,7 @@ class MLManager:
             >>> model.fit(train_x, train_y, **params_fit)'
         params_fit_evaldict:
             This is used like ...
-            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y, "_sample_weight": sample_weight})
+            >>> params_fit_evaldict.update({"_validation_x": valid_x, "_validation_y": valid_y})
             >>> params_fit = eval(params_fit, {}, params_fit_evaldict)
         """
         self.logger.info("START", color=["GREEN", "BOLD"])
@@ -904,6 +903,7 @@ class MLManager:
                     indexes_train.append(indexes[~np.isin(indexes, index_split[i])].copy())
                     indexes_valid.append(index_split[i].copy())
         # cross validation
+        self.logger.info(f"params_fit: {params_fit}, params_fit_evaldict: {params_fit_evaldict}, dict_extra_cols: {dict_extra_cols}")
         for i_cv, (index_train, index_valid) in enumerate(zip(indexes_train, indexes_valid)):
             i_cv += 1
             self.logger.info(f"cross validation : {i_cv} / {n_cv} start...", color=["CYAN"])

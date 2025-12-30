@@ -74,7 +74,10 @@ def unmask_values(value: object, map_dict: dict) -> object:
     elif isinstance(value, dict):
         return {k: unmask_values(v, map_dict) for k, v in value.items()}
     else:
-        return map_dict[value] if value in map_dict else value
+        try:
+            return map_dict[value] if value in map_dict else value
+        except TypeError:
+            return value
 
 def unmask_value_isin_object(value: object, map_list: list[object]) -> bool:
     assert isinstance(map_list, list)
@@ -83,6 +86,8 @@ def unmask_value_isin_object(value: object, map_list: list[object]) -> bool:
     elif isinstance(value, dict):
         return {k: unmask_value_isin_object(v, map_list) for k, v in value.items()}
     else:
+        try: hash(value)
+        except TypeError: return False
         if value in map_list:
             return True
     return False
