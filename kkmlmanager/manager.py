@@ -559,7 +559,9 @@ class MLManager:
         assert isinstance(is_ans, bool)
         self.logger.info(f"proc call row: {is_row}")
         if is_row:
+            self.proc_row.check_proc(False)
             df, indexes = self.proc_row(df, is_return_index=True)
+            self.proc_row.check_proc(True)
         else:
             indexes = df.index.copy() if isinstance(df, pd.DataFrame) else np.arange(df.shape[0], dtype=int)
         self.logger.info(f"df shape: {df.shape}")

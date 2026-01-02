@@ -4,7 +4,7 @@ from sklearn.metrics import roc_auc_score, r2_score, log_loss
 from kklogger import set_logger
 
 # local package
-from .calibration import expected_calibration_error
+from .calibration import expected_calibration_error, expected_calibration_error_per_ndata
 LOGGER = set_logger(__name__)
 
 
@@ -122,5 +122,11 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
         se["ece_100"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=1.00)
         se["ece_200"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=2.00)
         se["ece_400"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=4.00)
+        if ndf_pred.shape[0] >= 10:
+            se["ece_n10_1"] = expected_calibration_error_per_ndata(ndf_pred, input_y_class, n_data_per_bin=10,    is_consider_all_class=True)
+        if ndf_pred.shape[0] >= 100:
+            se["ece_n10_2"] = expected_calibration_error_per_ndata(ndf_pred, input_y_class, n_data_per_bin=100,   is_consider_all_class=True)
+        if ndf_pred.shape[0] >= 1000:
+            se["ece_n10_3"] = expected_calibration_error_per_ndata(ndf_pred, input_y_class, n_data_per_bin=1000,  is_consider_all_class=True)
     LOGGER.info("END")
     return se, df
