@@ -994,6 +994,34 @@ class MLManager:
         self.logger.info("END", color=["GREEN", "BOLD"])
         return se_eval, df_eval
     
+    def re_evalate(self):
+        self.logger.info("START", color=["GREEN", "BOLD"])
+        assert self.is_fit, "You should fit the model first"
+        # cross validation
+        for icv in self.list_cv:
+            self.logger.info(f"re-evaluate cross validation: {icv}")
+            dfwk    = getattr(self, f"eval_valid_df_cv{icv}").copy()
+            valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+            valid_y = dfwk["answer"].to_numpy()
+            se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+            setattr(self, f"eval_valid_se_cv{icv}", se_eval.copy())
+        # validation
+        self.logger.info(f"re-evaluate validation")
+        dfwk    = self.eval_valid_df.copy()
+        valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+        valid_y = dfwk["answer"].to_numpy()
+        se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+        self.eval_valid_se = se_eval.copy()
+        # test
+        dfwk    = self.eval_test_df.copy()
+        if dfwk.shape[0] > 0:
+            self.logger.info(f"re-evaluate test")
+            valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+            valid_y = dfwk["answer"].to_numpy()
+            se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+            self.eval_test_se = se_eval.copy()
+        self.logger.info("END", color=["GREEN", "BOLD"])
+
     def set_n_jobs(self, n_jobs: int):
         self.n_jobs          = n_jobs
         self.proc_row.n_jobs = n_jobs
