@@ -78,6 +78,7 @@ class MLManager:
         self.is_fit       = False
         self.is_postmodel = False
         self.list_cv      = []
+        self.list_loop    = []
         self.columns_hist = [self.columns_exp.copy(), ]
         self.columns      = self.columns_exp.copy()
         self.proc_row     = RegistryProc(n_jobs=self.n_jobs, is_auto_colslct=False)
@@ -107,6 +108,7 @@ class MLManager:
             "model_post":    self.model_post.to_dict(mode=mode, savedir=savedir) if self.model_post is not None else None,
             "model_func":    self.model_func,
             "list_cv":       self.list_cv,
+            "list_loop":     self.list_loop,
             "is_fit":        self.is_fit,
             "is_postmodel":  self.is_postmodel,
             "is_reg":        self.is_reg,
@@ -235,6 +237,7 @@ class MLManager:
             ins.proc_exp     = copy.deepcopy(self.proc_exp)
             ins.proc_ans     = copy.deepcopy(self.proc_ans)
             ins.list_cv      = copy.deepcopy(self.list_cv)
+            ins.list_loop    = copy.deepcopy(self.list_loop)
             model_mode       = self.get_model_mode()
             if   model_mode == "model_post":
                 ins.model      = None
@@ -600,47 +603,75 @@ class MLManager:
         return output, input_y, input_index
     
     def set_post_model(
-        self, is_cv: bool=False, calibmodel: int | str | None=None, is_calib_after_cv: bool=False, list_cv: list[int] | None=None, 
+        self, is_cv: bool=False, is_loop: bool=False,
+        list_cv: list[int] | None=None, list_loop: list[int] | None=None,
+        calibmodel: int | str | None=None, is_calib_after_cv: bool=False,
         is_normalize: bool=False, n_bins: int=None, df_calib: DATAFRAME_NONE=None, useerr: bool=True,
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
         self.logger.info(
-            f"is_cv={is_cv}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, list_cv={list_cv}, " + 
+            f"is_cv={is_cv}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, " + 
+            f"list_cv={list_cv}, list_loop={list_loop}, " + 
             f"is_normalize={is_normalize}, n_bins={n_bins}, df_calib={df_calib}, useerr={useerr}"
         )
         assert isinstance(is_cv, bool)
+        assert isinstance(is_loop, bool)
+        assert not (is_cv and is_loop)
         assert isinstance(calibmodel, (int, type(None)))
         is_calib = (calibmodel is not None)
-        assert isinstance(is_calib, bool)
-        assert not (is_cv == False and is_calib == False)
         assert isinstance(is_calib_after_cv, bool)
-        assert not (is_calib_after_cv and (is_cv == False or is_calib == False))
         assert isinstance(is_normalize, bool)
-        assert not (is_calib == False and is_calib_after_cv == True)
-        assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
-        assert list_cv is None or check_type_list(list_cv, int)
-        if list_cv is not None and len(self.list_cv) > 0:
-            list_cv = [str(x).zfill(len(self.list_cv[0])) for x in list_cv]
-            assert sum([x in self.list_cv for x in list_cv]) == len(list_cv)
-        assert n_bins is None or isinstance(n_bins, int)
-        if list_cv is None: list_cv = self.list_cv
-        for x in list_cv: assert hasattr(self, f"model_cv{x}")
-        assert isinstance(df_calib, DATAFRAME_NONE)
         assert isinstance(useerr, bool)
+        assert isinstance(n_bins, (int, type(None)))
+        assert isinstance(df_calib, DATAFRAME_NONE)
+        if is_calib_after_cv: assert is_calib
+        if is_cv:
+            assert is_loop == False
+            assert list_loop is None
+            if is_calib_after_cv:
+                assert df_calib is not None, "is_calib_after_cv use other dataframe for calibration."
+            assert len(self.list_cv) > 0 and check_type_list(self.list_cv, str)
+            if list_cv is not None:
+                assert check_type_list(list_cv, int)
+                assert all([(x > 0 and x <= len(self.list_cv)) for x in list_cv])
+                list_cv = [str(x).zfill(len(self.list_cv[0])) for x in list_cv]
+                assert all([x in self.list_cv for x in list_cv])
+            else:
+                list_cv = self.list_cv
+            assert all([hasattr(self, f"model_cv{x}") for x in list_cv])
+        elif is_loop:
+            assert is_cv == False
+            assert list_cv is None
+            assert is_calib_after_cv == False
+            if is_calib:
+                assert df_calib is not None, "is_loop mode can't use validation, so df_calib must be set."
+            assert len(self.list_loop) > 0 and check_type_list(self.list_loop, str)
+            if list_loop is not None:
+                assert check_type_list(list_loop, int)
+                assert all([(x > 0 and x <= len(self.list_loop)) for x in list_loop])
+                list_loop = [str(x).zfill(len(self.list_loop[0])) for x in list_loop]
+                assert all([x in self.list_loop for x in list_loop])
+            else:
+                list_loop = self.list_loop
+            assert all([hasattr(self, f"model_loop{x}") for x in list_loop])
+        else:
+            ## is_cv == False, is_loop == False
+            assert list_cv   is None
+            assert list_loop is None
+            assert is_calib
+        # set post model
         if is_cv:
             if is_calib_after_cv:
+                assert is_calib
+                assert df_calib is not None
                 modelcv = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
-                if is_calib:
-                    assert df_calib is not None
-                    modelcalib = Calibrator(
-                        modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
-                        calibmodel=calibmodel, useerr=useerr
-                    )
-                    input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
-                    modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
-                    self.model_post = modelcalib
-                else:
-                    self.model_post = modelcv
+                modelcalib = Calibrator(
+                    modelcv, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
+                    calibmodel=calibmodel, useerr=useerr
+                )
+                input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
+                modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
+                self.model_post = modelcalib
             else:
                 if is_calib:
                     models = []
@@ -660,16 +691,28 @@ class MLManager:
                     self.model_post = MultiModel(models, func_predict=self.model_func)
                 else:
                     self.model_post = MultiModel([getattr(self, f"model_cv{x}") for x in list_cv], func_predict=self.model_func)
-        else:
+        elif is_loop:
+            modelloop = MultiModel([getattr(self, f"model_loop{x}") for x in list_loop], func_predict=self.model_func)
             if is_calib:
-                assert df_calib is not None
                 modelcalib = Calibrator(
-                    self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
+                    modelloop, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
                     calibmodel=calibmodel, useerr=useerr
                 )
                 input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
                 modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
                 self.model_post = modelcalib
+            else:
+                self.model_post = modelloop
+        else:
+            assert is_calib
+            assert df_calib is not None
+            modelcalib = Calibrator(
+                self.model, self.model_func, is_normalize=is_normalize, is_reg=self.is_reg, 
+                calibmodel=calibmodel, useerr=useerr
+            )
+            input_x, input_y, _ = self.proc_call(df_calib, is_row=True, is_exp=True, is_ans=True)
+            modelcalib.fit(input_x, input_y, is_input_prob=False, n_bins=n_bins)
+            self.model_post = modelcalib
         self.is_postmodel = True
         self.logger.info(self.model_post.to_json(mode=2, indent=4))
         self.logger.info("END", color=["GREEN", "BOLD"])
@@ -689,12 +732,12 @@ class MLManager:
 
     def fit(
         self, df_train: DATAFRAME, df_valid: DATAFRAME_NONE=None, is_proc_fit: bool=True, 
-        params_fit: str | dict="{}", params_fit_evaldict: dict={}, is_eval_train: bool=False, dict_extra_cols: dict[str, str]=None,
+        params_fit: str | dict={}, params_fit_evaldict: dict={}, is_eval_train: bool=False, dict_extra_cols: dict[str, str]=None,
     ):
         """
         params_fit:
             Below are preserved keys. "_train_XXXXX" is basically used for sample weight.
-            "_validation_x", "_validation_y", "_train_XXXXX", "_valid_XXXXX"
+            "_validation_x", "_validation_y", "_train_XXXXX", "_valid_XXXXX", "_random_seed"
         """
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert isinstance(df_train, DATAFRAME)
@@ -724,7 +767,7 @@ class MLManager:
             valid_x, valid_y, valid_index = self.proc_call(df_valid, is_row=True, is_exp=True, is_ans=True)
         if self.model is None: self.logger.raise_error("model is not set.")
         # other columns (like sample weight)
-        dict_extra = {"_validation_x": valid_x, "_validation_y": valid_y}
+        dict_extra = {"_validation_x": valid_x, "_validation_y": valid_y, "_random_seed": self.random_seed}
         if dict_extra_cols is not None:
             for x, y in dict_extra_cols.items():
                 if isinstance(df_train, pl.DataFrame):
@@ -792,7 +835,7 @@ class MLManager:
         n_split: int | None=None, n_cv: int | None=None, mask_split: np.ndarray | None=None,
         cols_multilabel_split: list[str] | None=None, group_split: str | list[str] | None=None,
         indexes_train: list[np.ndarray] | None=None, indexes_valid: list[np.ndarray] | None=None,
-        params_fit: str | dict="{}", params_fit_evaldict: dict={},
+        params_fit: str | dict={}, params_fit_evaldict: dict={},
         is_proc_fit_every_cv: bool=True, is_save_cv_models: bool=False, dict_extra_cols: dict[str, str] | None=None,
     ):
         """
@@ -928,6 +971,54 @@ class MLManager:
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END", color=["GREEN", "BOLD"])
     
+    def fit_loop(
+        self, df_train: DATAFRAME, df_valid: DATAFRAME_NONE=None, n_loop: int=2, 
+        params_fit: str | dict={}, params_fit_evaldict: dict={},
+        is_save_models: bool=True, dict_extra_cols: dict[str, str] | None=None,
+    ):
+        """
+        n_loop:
+            The number of loop
+        """
+        self.logger.info("START", color=["GREEN", "BOLD"])
+        assert isinstance(df_train, DATAFRAME)
+        assert isinstance(df_valid, DATAFRAME_NONE)
+        for x in self.columns_oth:
+            assert np.any(np.array(df_train.columns, dtype=object) == x)
+            if df_valid is not None: assert np.any(np.array(df_valid.columns, dtype=object) == x)
+        assert isinstance(n_loop, int) and n_loop >= 1
+        assert isinstance(params_fit, (str, dict))
+        assert isinstance(is_save_models, bool)
+        if dict_extra_cols is not None:
+            assert isinstance(dict_extra_cols, dict)
+            for x in dict_extra_cols.keys(): assert x in df_train.columns
+        assert unmask_value_isin_object(params_fit, ["_random_seed"])
+        # proc fitting
+        self.proc_fit(df_train, is_row=True, is_exp=True, is_ans=True)
+        # fit loop
+        org_random_seed = self.random_seed
+        for i_loop in range(n_loop):
+            i_loop += 1
+            self.logger.info(f"fit loop : {i_loop} / {n_loop} start...", color=["CYAN"])
+            self.random_seed = org_random_seed + i_loop
+            self.reset_model()
+            self.fit(
+                df_train=df_train, df_valid=df_valid,
+                is_proc_fit=False, params_fit=params_fit, params_fit_evaldict=params_fit_evaldict,
+                is_eval_train=False, dict_extra_cols=dict_extra_cols
+            )
+            self.logger.info(f"fit loop : {i_loop} / {n_loop} end...", color=["CYAN"])
+            setattr(self, f"eval_valid_df_loop{str(i_loop).zfill(len(str(n_loop)))}", self.eval_valid_df)
+            setattr(self, f"eval_valid_se_loop{str(i_loop).zfill(len(str(n_loop)))}", self.eval_valid_se)
+            if is_save_models:
+                if hasattr(self.model, "copy"):
+                    setattr(self, f"model_loop{str(i_loop).zfill(len(str(n_loop)))}", self.model.copy())
+                else:
+                    setattr(self, f"model_loop{str(i_loop).zfill(len(str(n_loop)))}", copy.deepcopy(self.model))
+        self.random_seed = org_random_seed
+        self.list_loop = [f"{str(i_loop+1).zfill(len(str(n_loop)))}" for i_loop in range(n_loop)]
+        self.logger.info("END", color=["GREEN", "BOLD"])
+
     def fit_basic_treemodel(
         self, df_train: DATAFRAME, df_valid: DATAFRAME_NONE=None, df_test: DATAFRAME_NONE=None,
         ncv: int=2, n_estimators: int=100, model_kwargs: dict={}
@@ -1005,6 +1096,14 @@ class MLManager:
             valid_y = dfwk["answer"].to_numpy()
             se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
             setattr(self, f"eval_valid_se_cv{icv}", se_eval.copy())
+        # fit loop
+        for iloop in self.list_loop:
+            self.logger.info(f"re-evaluate fit loop: {iloop}")
+            dfwk    = getattr(self, f"eval_valid_df_loop{iloop}").copy()
+            valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+            valid_y = dfwk["answer"].to_numpy()
+            se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+            setattr(self, f"eval_valid_se_loop{iloop}", se_eval.copy())
         # validation
         self.logger.info(f"re-evaluate validation")
         dfwk    = self.eval_valid_df.copy()

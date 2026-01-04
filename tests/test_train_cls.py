@@ -122,6 +122,34 @@ if __name__ == "__main__":
     assert np.allclose(df_eval, ins4.evaluate(df_test, is_store=True)[-1])
     assert np.allclose(df_eval, ins5.evaluate(df_test, is_store=True)[-1])
 
+    # training fit loop
+    manager.fit_loop(
+        df_train, df_valid=df_test, n_loop=5, is_save_models=True,
+        params_fit=dict[str, str](
+            loss_func=CategoricalFocalLoss(n_class, gamma=0.5, dx=1e-5), num_iterations=20,
+            x_valid="_validation_x", y_valid="_validation_y", loss_func_eval=["__copy__", Accuracy(top_k=2)], 
+            early_stopping_rounds=20, early_stopping_idx=0, 
+            sample_weight="balanced", categorical_features=np.where([x.startswith("Soil_Type_") for x in manager.columns])[0].tolist(),
+            random_seed="_random_seed",
+        )
+    )
+    manager.set_post_model(is_loop=True)
+    output, input_y, input_index = manager.predict(df_test, is_row=False, is_exp=True, is_ans=False)
+    se_eval, df_eval = manager.evaluate(df_test, is_store=True)
+    print(manager.to_json(indent=4, mode=2))
+    ins1 = MLManager.from_dict(manager.to_dict())
+    ins2 = MLManager.from_json(manager.to_json())
+    ins3 = manager.copy(is_minimum=True)
+    manager.save(dirpath="./tmp/", filename="tmp", is_remake=True, is_minimum=False, is_json=True, mode=1)
+    ins4 = MLManager.load(filepath="./tmp/tmp.json", n_jobs=manager.n_jobs)
+    manager.save(dirpath="./tmp/", filename="tmp", is_remake=False, is_minimum=False, is_json=False)
+    ins5 = MLManager.load(filepath="./tmp/tmp.pickle", n_jobs=manager.n_jobs)
+    assert np.allclose(df_eval, ins1.evaluate(df_test, is_store=True)[-1])
+    assert np.allclose(df_eval, ins2.evaluate(df_test, is_store=True)[-1])
+    assert np.allclose(df_eval, ins3.evaluate(df_test, is_store=True)[-1])
+    assert np.allclose(df_eval, ins4.evaluate(df_test, is_store=True)[-1])
+    assert np.allclose(df_eval, ins5.evaluate(df_test, is_store=True)[-1])
+
     # test basic tree model
     manager.fit_basic_treemodel(df_train, df_valid=None, df_test=df_test, ncv=2, n_estimators=20)
     se_eval, df_eval = manager.evaluate(df_test, is_store=True)
