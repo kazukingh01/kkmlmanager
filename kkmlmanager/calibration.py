@@ -39,6 +39,9 @@ class BaseCalibrator:
         raise NotImplementedError()
     def predict(self) -> np.ndarray | NdarrayWithErr:
         raise NotImplementedError()
+    @property
+    def is_fit_required(self) -> bool:
+        raise NotImplementedError()
 
 
 class IsotonicRegressionWithError:
@@ -186,14 +189,21 @@ class MultiLabelRegressionWithError(BaseCalibrator):
             output = output[:, 0]
         LOGGER.info("END")
         return output
-
+    @property
+    def is_fit_required(self) -> bool:
+        return True
 
 class TemperatureScaling(BaseCalibrator):
-    def __init__(self, T: int | float=1.0):
+    def __init__(self, s: int | float=0.0, T: int | float | None=None):
         LOGGER.info("START")
-        assert isinstance(T, (int, float))
-        assert T > 0.0
-        self.T = float(T)
+        assert isinstance(s, (int, float))
+        assert isinstance(T, (int, float, type(None)))
+        self.s = s
+        if T is not None:
+            assert T > 0.0
+            self.T = float(T)
+        else:
+            self.T = None
         super().__init__()
         LOGGER.info("END")
     def __str__(self):
@@ -203,12 +213,13 @@ class TemperatureScaling(BaseCalibrator):
     def to_dict(self) -> dict:
         return {
             "__BaseModel__": "kkmlmanager.calibration.TemperatureScaling",
-            "T": self.T
+            "s": self.s,
+            "T": self.T,
         }
     @classmethod
     def from_dict(cls, dict_model: dict):
         assert isinstance(dict_model, dict)
-        return cls(T=dict_model["T"])
+        return cls(s=dict_model["s"], T=dict_model["T"])
     def fit(self, probs: np.ndarray, labels: np.ndarray, axis: int=-1):
         LOGGER.info("START")
         assert isinstance(probs,  np.ndarray)
@@ -224,14 +235,15 @@ class TemperatureScaling(BaseCalibrator):
         logits = np.log(probs + 1e-12)
         res = minimize(
             fun=lambda x: self.nll_and_grad(x[0], logits=logits, labels=labels, axis=axis),
-            x0=np.array([self.T], dtype=np.float64),
+            x0=np.array([self.s], dtype=np.float64),
             jac=True,
-            bounds=[(1e-2, None)],
+            bounds=[(None, None)],
             method='L-BFGS-B',
-            options={'maxiter': 100}
+            options={'maxiter': 1000}
         )
-        LOGGER.info(f"T: init={self.T}, after={float(res.x[0])}")
-        self.T = float(res.x[0])
+        LOGGER.info(f"log(T): init={self.s}, after={float(res.x[0])}")
+        self.s = float(res.x[0])
+        self.T = float(np.exp(self.s))
         LOGGER.info("END")
         return self
     def predict(self, probs: np.ndarray, axis: int=-1):
@@ -245,6 +257,8 @@ class TemperatureScaling(BaseCalibrator):
             probs = np.concatenate([1.0 - probs, probs], axis=-1)
             is_binary = True
         assert probs.ndim >= 2
+        tmp = probs.sum(axis=-1)
+        assert np.all((tmp >= 0.99) & (tmp <= 1.01))
         logits  = np.log(probs + 1e-12)
         calibrated = self.temperature_scaling(logits, self.T, axis)
         if is_binary:
@@ -263,17 +277,17 @@ class TemperatureScaling(BaseCalibrator):
         scaled   = centered / temperature
         return softmax(scaled, axis=axis)
     @classmethod
-    def nll_and_grad(cls, temperature: float | int, logits: np.ndarray=None, labels: np.ndarray=None, axis: int=-1):
-        assert isinstance(temperature, (int, float)) and temperature > 0.0
+    def nll_and_grad(cls, s: float | int, logits: np.ndarray=None, labels: np.ndarray=None, axis: int=-1):
+        assert isinstance(s, (int, float))
         assert isinstance(logits, np.ndarray)
         assert isinstance(labels, np.ndarray)
         assert logits.ndim >= 2
         assert labels.ndim == 1
         assert logits.shape[0] == labels.shape[0]
         assert isinstance(axis, int)
-        T        = float(temperature)
+        T        = np.exp(float(s)) # T > 0
         centered = logits - np.max(logits, axis=axis, keepdims=True)
-        scaled   = centered / temperature
+        scaled   = centered / T
         P        = softmax(scaled, axis=axis)
         idx      = np.arange(len(labels))
         nll      = -np.sum(np.log(P[idx, labels]))
@@ -281,6 +295,12 @@ class TemperatureScaling(BaseCalibrator):
         z_true   = centered[idx, labels]
         grad     = -np.sum((E_z - z_true) / (T**2))
         return nll, np.array([grad])
+    @property
+    def is_fit_required(self) -> bool:
+        if self.T is None:
+            return True
+        else:
+            return False
 
 
 def calib_with_error(prob: np.ndarray, target: np.ndarray, n_bins: int=10):

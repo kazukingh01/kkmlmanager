@@ -172,7 +172,3 @@ if __name__ == "__main__":
     manager.eval_valid_se_cv1["auc_0"] = 0.0
     manager.re_evalate()
     assert np.allclose(val, float(manager.eval_valid_se_cv1["auc_0"]))
-
-    # # calibration
-    # manager.calibration(is_use_valid=True, n_bins=100)
-    # manager.calibration(is_use_valid=True, n_bins=100, is_binary_fit=True)

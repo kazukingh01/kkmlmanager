@@ -1,4 +1,4 @@
-import json, importlib
+import json, importlib, copy
 from functools import partial
 import numpy as np
 import pandas as pd
@@ -117,7 +117,7 @@ class MultiModel(BaseModel):
 
 
 class Calibrator(BaseModel):
-    def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False, calibmodel: str | int=None, useerr: bool=True):
+    def __init__(self, model, func_predict: str, is_normalize: bool=False, is_reg: bool=False, calibmodel: str | int=None, useerr: bool=False, **kwargs):
         LOGGER.info(f"START: {self.__class__.__name__}")
         assert isinstance(func_predict, str)
         assert hasattr(model, func_predict)
@@ -128,21 +128,24 @@ class Calibrator(BaseModel):
         if isinstance(calibmodel, int):
             assert calibmodel in [0, 1]
             calibmodel = ["MultiLabelRegressionWithError", "TemperatureScaling"][calibmodel]
-        assert calibmodel in ["MultiLabelRegressionWithError", "TemperatureScaling"]
+        assert calibmodel in ["MultiLabelRegressionWithError", "TemperatureScaling"], f"{calibmodel} is not supported."
         if is_reg:
             assert is_normalize == False
             assert calibmodel   in ["MultiLabelRegressionWithError"]
+        if calibmodel in ["TemperatureScaling"]:
+            assert is_normalize == False, "This method is naturally applied to normalized probabilities."
         LOGGER.info(f"model: {model}, func_predict: {func_predict}, is_normalize: {is_normalize}, is_reg: {is_reg}, calibmodel: {calibmodel}")
         self.model         = model
-        self.calibrator: BaseCalibrator = {
-            "MultiLabelRegressionWithError": MultiLabelRegressionWithError(increasing=True, set_first_score=True, is_reg=is_reg),
-            "TemperatureScaling":            TemperatureScaling(),
-        }[calibmodel]
+        self.calibrator: BaseCalibrator = None
+        if calibmodel == "MultiLabelRegressionWithError":
+            self.calibrator = MultiLabelRegressionWithError(increasing=True, set_first_score=True, is_reg=is_reg, **kwargs)
+        elif calibmodel == "TemperatureScaling":
+            self.calibrator = TemperatureScaling(**kwargs)
         self.func_predict  = func_predict
         self.is_normalize  = is_normalize
         self.is_reg        = is_reg
         self.calibmodel    = calibmodel
-        self.classes_      = None
+        self.classes_      = copy.deepcopy(np.array(self.model.classes_)) if hasattr(self.model, "classes_") else None
         self.calib_fig     = None
         self.useerr        = useerr
         super().__init__(func_predict, default_params_for_predict={"is_mock": False})
@@ -229,7 +232,7 @@ class Calibrator(BaseModel):
         """
         if is_input_prob == True, 'input_x' must be probabilities, not Features.
         """
-        LOGGER.info(f"START: {self.__class__.__name__}")
+        LOGGER.info(f"START: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         assert isinstance(is_input_prob, bool)
         assert isinstance(n_bins, int) and n_bins >= 5
         if is_input_prob == False:
@@ -256,7 +259,7 @@ class Calibrator(BaseModel):
             assert input_x.ndim == 2
             assert input_x.shape[1] == self.classes_.shape[0]
             self.calib_fig = calibration_curve_plot(input_x, output, input_y, n_bins=n_bins)
-        LOGGER.info(f"END: {self.__class__.__name__}")
+        LOGGER.info(f"END: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         return self
     def _predict_common(self, input_x, *args, is_mock: bool=False, is_normalize: bool=None, **kwargs) -> NdarrayWithErr:
         """

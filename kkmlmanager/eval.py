@@ -4,6 +4,7 @@ from sklearn.metrics import roc_auc_score, r2_score, log_loss
 from kklogger import set_logger
 
 # local package
+from .util.numpy import NdarrayWithErr
 from .calibration import expected_calibration_error, expected_calibration_error_per_ndata
 LOGGER = set_logger(__name__)
 
@@ -35,7 +36,9 @@ def predict_model(model, input: np.ndarray, is_reg: bool=False, func_predict: st
     LOGGER.info(f"model: {model}, is_reg: {is_reg}, func_predict: {func_predict}, kwargs: {kwargs}")
     assert isinstance(func_predict, str)    
     output = getattr(model, func_predict)(input, **kwargs)
-    assert isinstance(output, np.ndarray)
+    if isinstance(output, NdarrayWithErr):
+        output = output.val
+    assert isinstance(output, (np.ndarray)), f"type: {type(output)}"
     assert len(output.shape) in [1, 2]
     if len(output.shape) == 1: output = output.reshape(-1, 1)
     if is_reg:

@@ -65,6 +65,8 @@ class NdarrayWithErr:
         assert val.shape == err.shape
         self.val = val
         self.err = err
+    def __array__(self, dtype=None):
+        return self.val.__array__(dtype=dtype)
     def __getitem__(self, idx) -> typing.Self:
         return __class__(self.val[idx], self.err[idx])
     def __add__(self, other) -> typing.Self:
