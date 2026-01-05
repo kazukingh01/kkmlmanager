@@ -1144,6 +1144,12 @@ class MLManager:
         self, dirpath: str=f"__tmp__", filename: str=None, is_remake: bool=False, is_minimum: bool=False, 
         is_json: bool=False, mode: int=0, encoding: str="utf8"
     ):
+        """
+        mode:
+            0: base64 encoding
+            1: save to file
+            2: only class name (no save object)
+        """
         self.logger.info("START", color=["GREEN", "BOLD"])
         assert isinstance(dirpath, str) or dirpath is None
         assert isinstance(is_remake, bool)
