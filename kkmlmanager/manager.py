@@ -1112,14 +1112,15 @@ class MLManager:
             se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
             setattr(self, f"eval_valid_se_loop{iloop}", se_eval.copy())
         # validation
-        self.logger.info(f"re-evaluate validation")
-        dfwk    = self.eval_valid_df.copy()
-        valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
-        valid_y = dfwk["answer"].to_numpy()
-        se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
-        self.eval_valid_se = se_eval.copy()
+        dfwk = self.eval_valid_df.copy()
+        if dfwk.shape[0] > 0:
+            self.logger.info(f"re-evaluate validation")
+            valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+            valid_y = dfwk["answer"].to_numpy()
+            se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+            self.eval_valid_se = se_eval.copy()
         # test
-        dfwk    = self.eval_test_df.copy()
+        dfwk = self.eval_test_df.copy()
         if dfwk.shape[0] > 0:
             self.logger.info(f"re-evaluate test")
             valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
