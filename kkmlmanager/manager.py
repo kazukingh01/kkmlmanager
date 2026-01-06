@@ -127,18 +127,18 @@ class MLManager:
             "eval_test_se":  self.eval_test_se. to_dict(),
         }
         for x in dir(self):
-            if re.match(r"^eval_valid_se_cv", x) is not None:
+            if (re.match(r"^eval_valid_se_cv", x) is not None) or (re.match(r"^eval_valid_se_loop", x) is not None):
                 dictwk[x] = getattr(self, x).to_dict()
             elif x in ["eval_adversarial_se"]:
                 dictwk[x] = getattr(self, x).to_dict()
         for x in dir(self): # separating to avoid long text goes head
-            if (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None):
+            if (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None) or (re.match(r"^eval_valid_df_loop", x) is not None):
                 if mode != 2:
                     LOGGER.info(f"encode: {x}, it might be slow process...")
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir, func_encode=encode_dataframe_to_zip_base64)
         dictwk["model"] = encode_object(self.model, mode=mode, savedir=savedir) if self.model is not None else None # long text goes last
         for x in dir(self):
-            if re.match(r"^model_cv[0-9]+$", x) is not None:
+            if (re.match(r"^model_cv[0-9]+$", x) is not None) or (re.match(r"^model_loop[0-9]+$", x) is not None):
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir)
         self.logger.info("END")
         return dictwk
@@ -194,15 +194,15 @@ class MLManager:
                 ins.columns      = np.array(y, dtype=object)
             elif x == "columns_hist":
                 ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
-            elif (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None):
+            elif (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None) or (re.match(r"^eval_valid_df_loop", x) is not None):
                 try:
                     setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
                 except Exception as e:
                     LOGGER.warning(f"failed to decode {x}: {e}")
                     setattr(ins, x, None)
-            elif re.match(r"^eval_valid_se_cv", x) is not None:
+            elif (re.match(r"^eval_valid_se_cv", x) is not None) or (re.match(r"^eval_valid_se_loop", x) is not None):
                 setattr(ins, x, pd.Series(y))
-            elif re.match(r"^model_cv[0-9]+$", x) is not None:
+            elif (re.match(r"^model_cv[0-9]+$", x) is not None) or (re.match(r"^model_loop[0-9]+$", x) is not None):
                 setattr(ins, x, decode_object(y, basedir=basedir))
             else:
                 setattr(ins, x, y)
@@ -611,7 +611,7 @@ class MLManager:
     ) -> typing.Self:
         self.logger.info("START", color=["GREEN", "BOLD"])
         self.logger.info(
-            f"is_cv={is_cv}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, " + 
+            f"is_cv={is_cv}, is_loop={is_loop}, calibmodel={calibmodel}, is_calib_after_cv={is_calib_after_cv}, " + 
             f"list_cv={list_cv}, list_loop={list_loop}, " + 
             f"is_normalize={is_normalize}, n_bins={n_bins}, df_calib={df_calib}, useerr={useerr}, " + 
             f"kwargs_calib={kwargs_calib}"
