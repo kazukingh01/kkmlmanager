@@ -285,3 +285,23 @@ def normalize(input_x: np.ndarray | NdarrayWithErr, y_min: float=0.0, y_max: flo
     else:
         output = input_x
     return output / output.sum(axis=-1, keepdims=True)
+
+def object_nptype_to_pytype(_o: list | tuple | dict | str | int | float | bool) -> typing.Any:
+    if isinstance(_o, list):
+        return [object_astype(x) for x in _o]
+    elif isinstance(_o, tuple):
+        return tuple([object_astype(x) for x in _o])
+    elif isinstance(_o, dict):
+        return {object_astype(x): object_astype(y) for x, y in _o.items()}
+    elif isinstance(_o, (np.ndarray, np.array)):
+        return object_astype(_o.tolist())
+    elif isinstance(_o, (np.str_, str)):
+        return str(_o)
+    elif isinstance(_o, (int, np.int64, np.int32, np.int16, np.int8)):
+        return int(_o)
+    elif isinstance(_o, (float, np.float64, np.float32, np.float16)):
+        return float(_o)
+    elif isinstance(_o, (bool, np.bool)):
+        return bool(_o)
+    else:
+        assert False, f"Unexpected type: {type(_o)}"
