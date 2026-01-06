@@ -293,7 +293,7 @@ def object_nptype_to_pytype(_o: list | tuple | dict | str | int | float | bool) 
         return tuple([object_nptype_to_pytype(x) for x in _o])
     elif isinstance(_o, dict):
         return {object_nptype_to_pytype(x): object_nptype_to_pytype(y) for x, y in _o.items()}
-    elif isinstance(_o, (np.ndarray, np.array)):
+    elif isinstance(_o, np.ndarray):
         return object_nptype_to_pytype(_o.tolist())
     elif isinstance(_o, (np.str_, str)):
         return str(_o)
