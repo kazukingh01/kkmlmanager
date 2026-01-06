@@ -303,5 +303,7 @@ def object_nptype_to_pytype(_o: list | tuple | dict | str | int | float | bool) 
         return float(_o)
     elif isinstance(_o, (bool, np.bool)):
         return bool(_o)
+    elif isinstance(_o, type(None)):
+        return None
     else:
         assert False, f"Unexpected type: {type(_o)}"
