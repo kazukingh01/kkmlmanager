@@ -132,7 +132,11 @@ class MLManager:
             elif x in ["eval_adversarial_se"]:
                 dictwk[x] = getattr(self, x).to_dict()
         for x in dir(self): # separating to avoid long text goes head
-            if (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None) or (re.match(r"^eval_valid_df_loop", x) is not None):
+            if (
+                (re.match(r"^features_",          x) is not None) or 
+                (re.match(r"^eval_valid_df_cv",   x) is not None) or 
+                (re.match(r"^eval_valid_df_loop", x) is not None)
+            ):
                 if mode != 2:
                     LOGGER.info(f"encode: {x}, it might be slow process...")
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir, func_encode=encode_dataframe_to_zip_base64)
@@ -1107,10 +1111,13 @@ class MLManager:
         for iloop in self.list_loop:
             self.logger.info(f"re-evaluate fit loop: {iloop}")
             dfwk    = getattr(self, f"eval_valid_df_loop{iloop}").copy()
-            valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
-            valid_y = dfwk["answer"].to_numpy()
-            se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
-            setattr(self, f"eval_valid_se_loop{iloop}", se_eval.copy())
+            if dfwk.shape[0] > 0:
+                valid_x = dfwk.loc[:, dfwk.columns.str.contains("predict_proba_")].to_numpy()
+                valid_y = dfwk["answer"].to_numpy()
+                se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
+                setattr(self, f"eval_valid_se_loop{iloop}", se_eval.copy())
+            else:
+                self.logger.warning(f"eval_valid_df_loop{iloop} is empty")
         # validation
         dfwk = self.eval_valid_df.copy()
         if dfwk.shape[0] > 0:

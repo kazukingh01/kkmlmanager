@@ -149,6 +149,8 @@ if __name__ == "__main__":
     assert np.allclose(df_eval, ins3.evaluate(df_test, is_store=True)[-1])
     assert np.allclose(df_eval, ins4.evaluate(df_test, is_store=True)[-1])
     assert np.allclose(df_eval, ins5.evaluate(df_test, is_store=True)[-1])
+    ## re-evaluate for cross validation and loop validation
+    ins4.re_evalate()
 
     # test basic tree model
     manager.fit_basic_treemodel(df_train, df_valid=None, df_test=df_test, ncv=2, n_estimators=20)

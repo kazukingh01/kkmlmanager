@@ -288,6 +288,7 @@ def corr_coef_pearson_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dty
 
 def corr_coef_pearson_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     LOGGER.info("START")
+    import torch
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
     assert input_x.shape[0] == input_y.shape[0]
@@ -375,6 +376,7 @@ def corr_coef_spearman_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, is
 
 def corr_coef_spearman_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank: bool=True, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     LOGGER.info("START")
+    import torch
     assert isinstance(df_x, pl.DataFrame)
     assert isinstance(df_y, pl.DataFrame)
     assert isinstance(is_to_rank, bool)
@@ -422,6 +424,7 @@ def corr_coef_spearman_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank
 
 def corr_coef_kendall_2array(input_x: np.ndarray, input_y: np.ndarray, dtype: str="float16", n_sample: int=1000, n_iter: int=1, min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     LOGGER.info("START")
+    import torch
     device = "cuda:0" if is_gpu else "cpu"
     assert isinstance(input_x, np.ndarray)
     assert isinstance(input_y, np.ndarray)
@@ -537,6 +540,7 @@ def corr_coef_kendall_2array_numpy(input_x: np.ndarray, input_y: np.ndarray, dty
 
 def corr_coef_chatterjee_2array(df_x: pl.DataFrame, df_y: pl.DataFrame, is_to_rank: bool=True, dtype: str="float32", min_n: int=10, is_gpu: bool=False) -> np.ndarray:
     LOGGER.info("START")
+    import torch
     assert isinstance(df_x, pl.DataFrame)
     assert isinstance(df_y, pl.DataFrame)
     assert isinstance(is_to_rank, bool)
