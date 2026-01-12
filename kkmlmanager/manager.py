@@ -122,27 +122,30 @@ class MLManager:
             "proc_row":      self.proc_row.to_dict(),
             "proc_exp":      self.proc_exp.to_dict(),
             "proc_ans":      self.proc_ans.to_dict(),
-            "eval_train_se": self.eval_train_se.to_dict(),
-            "eval_valid_se": self.eval_valid_se.to_dict(),
-            "eval_test_se":  self.eval_test_se. to_dict(),
         }
         for x in dir(self):
-            if (re.match(r"^eval_valid_se_cv", x) is not None) or (re.match(r"^eval_valid_se_loop", x) is not None):
-                dictwk[x] = getattr(self, x).to_dict()
-            elif x in ["eval_adversarial_se"]:
+            if (
+                (re.match(r"^eval_valid_se_cv[0-9]+$",   x) is not None) or 
+                (re.match(r"^eval_valid_se_loop[0-9]+$", x) is not None) or
+                (x in ["eval_train_se", "eval_valid_se", "eval_test_se", "eval_adversarial_se"])
+            ):
                 dictwk[x] = getattr(self, x).to_dict()
         for x in dir(self): # separating to avoid long text goes head
             if (
-                (re.match(r"^features_",          x) is not None) or 
-                (re.match(r"^eval_valid_df_cv",   x) is not None) or 
-                (re.match(r"^eval_valid_df_loop", x) is not None)
+                (re.match(r"^features_",                 x) is not None) or
+                (re.match(r"^eval_valid_df_cv[0-9]+$",   x) is not None) or
+                (re.match(r"^eval_valid_df_loop[0-9]+$", x) is not None) or
+                (x in ["eval_valid_df"])
             ):
                 if mode != 2:
                     LOGGER.info(f"encode: {x}, it might be slow process...")
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir, func_encode=encode_dataframe_to_zip_base64)
         dictwk["model"] = encode_object(self.model, mode=mode, savedir=savedir) if self.model is not None else None # long text goes last
         for x in dir(self):
-            if (re.match(r"^model_cv[0-9]+$", x) is not None) or (re.match(r"^model_loop[0-9]+$", x) is not None):
+            if (
+                (re.match(r"^model_cv[0-9]+$",   x) is not None) or 
+                (re.match(r"^model_loop[0-9]+$", x) is not None)
+            ):
                 dictwk[x] = encode_object(getattr(self, x), mode=mode, savedir=savedir)
         self.logger.info("END")
         return dictwk
@@ -186,27 +189,31 @@ class MLManager:
                 ins.proc_exp = RegistryProc.from_dict(y)
             elif x == "proc_ans":
                 ins.proc_ans = RegistryProc.from_dict(y)
-            elif x == "eval_train_se":
-                ins.eval_train_se = pd.Series(y)
-            elif x == "eval_valid_se":
-                ins.eval_valid_se = pd.Series(y)
-            elif x == "eval_test_se":
-                ins.eval_test_se  = pd.Series(y)
-            elif x == "eval_adversarial_se":
-                ins.eval_adversarial_se = pd.Series(y)
             elif x == "columns":
                 ins.columns      = np.array(y, dtype=object)
             elif x == "columns_hist":
                 ins.columns_hist = [np.array(tmp, dtype=object) for tmp in y]
-            elif (re.match(r"^features_", x) is not None) or (re.match(r"^eval_valid_df_cv", x) is not None) or (re.match(r"^eval_valid_df_loop", x) is not None):
+            elif (
+                (re.match(r"^features_",                 x) is not None) or 
+                (re.match(r"^eval_valid_df_cv[0-9]+$",   x) is not None) or 
+                (re.match(r"^eval_valid_df_loop[0-9]+$", x) is not None) or
+                (x in ["eval_valid_df"])
+            ):
                 try:
                     setattr(ins, x, decode_object(y, basedir=basedir, func_decode=decode_dataframe_from_zip_base64))
                 except Exception as e:
                     LOGGER.warning(f"failed to decode {x}: {e}")
                     setattr(ins, x, None)
-            elif (re.match(r"^eval_valid_se_cv", x) is not None) or (re.match(r"^eval_valid_se_loop", x) is not None):
+            elif (
+                (re.match(r"^eval_valid_se_cv[0-9]+$",   x) is not None) or 
+                (re.match(r"^eval_valid_se_loop[0-9]+$", x) is not None) or
+                (x in ["eval_train_se", "eval_valid_se", "eval_test_se", "eval_adversarial_se"])
+            ):
                 setattr(ins, x, pd.Series(y))
-            elif (re.match(r"^model_cv[0-9]+$", x) is not None) or (re.match(r"^model_loop[0-9]+$", x) is not None):
+            elif (
+                (re.match(r"^model_cv[0-9]+$",   x) is not None) or 
+                (re.match(r"^model_loop[0-9]+$", x) is not None)
+            ):
                 setattr(ins, x, decode_object(y, basedir=basedir))
             else:
                 setattr(ins, x, y)
@@ -979,6 +986,8 @@ class MLManager:
                 else:
                     setattr(self, f"model_cv{str(i_cv).zfill(len(str(n_cv)))}", copy.deepcopy(self.model))
             if i_cv >= n_cv: break
+        self.eval_valid_df = pd.DataFrame(dtype=object) # reset
+        self.eval_valid_se = pd.Series(   dtype=object) # reset
         self.list_cv = [f"{str(i_cv+1).zfill(len(str(n_cv)))}" for i_cv in range(n_cv)]
         self.logger.info("END", color=["GREEN", "BOLD"])
     
@@ -1135,6 +1144,34 @@ class MLManager:
             se_eval, _ = eval_model(valid_x, valid_y, model=None, func_predict=None, is_reg=self.is_reg)
             self.eval_test_se = se_eval.copy()
         self.logger.info("END", color=["GREEN", "BOLD"])
+
+    def _select_stored_dataframe(self, query: str):
+        # this method is only for internal use
+        self.logger.info("START")
+        assert isinstance(query, str)
+        for x in dir(self):
+            if (
+                (re.match(r"^eval_valid_df_cv[0-9]+$",   x) is not None) or
+                (re.match(r"^eval_valid_df_loop[0-9]+$", x) is not None) or
+                (x in ["eval_valid_df"])
+            ):
+                df = getattr(self, x)
+                assert isinstance(df, DATAFRAME)
+                if df.shape[0] == 0: continue
+                if isinstance(df, pd.DataFrame):
+                    try:
+                        df = df.query(query)
+                    except pd.errors.UndefinedVariableError as e:
+                        self.logger.warning(f"Column not found error: {e}")
+                        continue
+                else:
+                    try:
+                        df = df.sql(f"SELECT * FROM self WHERE {query}")
+                    except pl.exceptions.ColumnNotFoundError as e:
+                        self.logger.warning(f"Column not found error: {e}")
+                        continue
+                setattr(self, x, df)
+        self.logger.info("END")
 
     def set_n_jobs(self, n_jobs: int):
         self.n_jobs          = n_jobs
