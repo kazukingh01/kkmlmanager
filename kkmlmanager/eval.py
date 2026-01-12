@@ -118,13 +118,21 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
             except ValueError: tmp = float("nan")
             se[f"auc_{i}"] = tmp
         weight = np.bincount(input_y_class, minlength=n_class)
-        se["auc_multi"] = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
-        se["auc_all"]   = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
-        se["ece_025"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=0.25)
-        se["ece_050"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=0.50)
-        se["ece_100"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=1.00)
-        se["ece_200"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=2.00)
-        se["ece_400"]   = expected_calibration_error(ndf_pred, input_y_class, n_bins=100, npow=4.00)
+        se["auc_multi"]   = (se.loc[se.index.str.contains("^auc_")].values * weight).sum() / weight.sum()
+        se["auc_all"]     = roc_auc_score(input_y_argmax.reshape(-1), ndf_pred.reshape(-1))
+        se["ece_025"]     = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=0.25, is_consider_all_class=False)
+        se["ece_050"]     = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=0.50, is_consider_all_class=False)
+        se["ece_100"]     = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=1.00, is_consider_all_class=False)
+        se["ece_200"]     = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=2.00, is_consider_all_class=False)
+        se["ece_400"]     = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=4.00, is_consider_all_class=False)
+        se["ece_025_all"] = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=0.25, is_consider_all_class=True)
+        se["ece_050_all"] = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=0.50, is_consider_all_class=True)
+        se["ece_100_all"] = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=1.00, is_consider_all_class=True)
+        se["ece_200_all"] = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=2.00, is_consider_all_class=True)
+        se["ece_400_all"] = expected_calibration_error(ndf_pred, input_y_class, n_bins=200, npow=4.00, is_consider_all_class=True)
+        for i_class in np.arange(n_class):
+            se[f"ece_100_c{i_class}"] = expected_calibration_error(ndf_pred[:, i_class], (input_y_class == i_class).astype(int), n_bins=200, npow=1.00, is_consider_all_class=False)
+        se[f"ece_100_cmean"] = np.mean([se.get(f"ece_100_c{i_class}", float("nan")) for i_class in np.arange(n_class)])
         if ndf_pred.shape[0] >= 10:
             se["ece_n10_1"] = expected_calibration_error_per_ndata(ndf_pred, input_y_class, n_data_per_bin=10,    is_consider_all_class=True)
         if ndf_pred.shape[0] >= 100:

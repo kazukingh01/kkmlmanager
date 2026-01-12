@@ -12,8 +12,12 @@ if __name__ == "__main__":
     dataset = reg.create("gas-drift")
     df_train, df_test = dataset.load_data(format="polars", split_type="test", test_size=0.3)
     n_class = dataset.metadata.n_classes
+
     # set manager
-    manager: MLManager = MLManager(dataset.metadata.columns_feature, dataset.metadata.columns_target, is_reg=False, n_jobs=8)
+    manager: MLManager = MLManager(
+        dataset.metadata.columns_feature, dataset.metadata.columns_target,
+        columns_oth=[dataset.metadata.columns_feature[0], ], is_reg=False, n_jobs=8
+    )
     # test basic tree model
     manager.fit_basic_treemodel(df_train, df_valid=None, df_test=df_test, ncv=3, n_estimators=100)
     # calibration

@@ -364,7 +364,7 @@ def calibration_curve_plot(
     return dict_fig
 
 
-def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, n_bins: int = 100, npow: float | int=1.0) -> float:
+def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, n_bins: int = 100, npow: float | int=1.0, is_consider_all_class: bool=False) -> float:
     assert isinstance(probs,  np.ndarray)
     assert isinstance(labels, np.ndarray)
     assert probs.shape[0] == labels.shape[0]
@@ -374,22 +374,31 @@ def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, n_bins: in
     assert labels.dtype in [np.int8, np.int16, np.int32, np.int64, int, bool, np.bool_]
     assert isinstance(n_bins, int) and n_bins >= 1
     assert isinstance(npow, (float, int)) and npow >= 0.1
-    if probs.ndim > 1:
-        confidences = np.max(probs, axis=-1)
-        predictions = np.argmax(probs, axis=-1)
+    assert isinstance(is_consider_all_class, bool)
+    if probs.ndim == 2:
+        nclass = probs.shape[1]
+        assert probs.shape[1] > 1
+        assert np.unique(labels).shape[0] == nclass, f"{np.unique(labels)}"
+        assert np.nanmin(labels) == 0 and np.nanmax(labels) == (nclass - 1)
+        if is_consider_all_class:
+            labels = np.eye(nclass, dtype=int)[labels].reshape(-1)
+            probs  = probs.reshape(-1)
+        else:
+            labels = (np.argmax(probs, axis=-1) == labels).astype(int)
+            probs  = np.nanmax(probs, axis=-1)
     else:
-        confidences = probs
-        predictions = (probs >= 0.5).astype(int)
+        assert np.unique(labels).shape[0] == 2, f"{np.unique(labels)}"
+        assert np.nanmin(labels) == 0 and np.nanmax(labels) == 1
     N = labels.shape[0]
     bin_edges = (np.linspace(0.0, 1.0, n_bins + 1) ** npow)
     ece = 0.0
     for i in range(n_bins):
-        mask = (confidences > bin_edges[i]) & (confidences <= bin_edges[i+1])
+        mask = (probs > bin_edges[i]) & (probs <= bin_edges[i+1])
         bin_size = np.sum(mask)
         if bin_size == 0:
             continue
-        avg_conf = np.mean(confidences[mask])
-        acc = np.mean(predictions[mask] == labels[mask])
+        avg_conf = np.mean(probs[mask])
+        acc      = np.mean(labels[mask])
         ece += (bin_size / N) * np.abs(acc - avg_conf)
     return ece
 
