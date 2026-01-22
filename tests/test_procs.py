@@ -5,7 +5,7 @@ import numpy as np
 from kkmlmanager.procs import BaseProc, ProcMinMaxScaler, ProcStandardScaler, ProcRankGauss, \
     ProcPCA, ProcOneHotEncoder, ProcFillNa, ProcFillNaMinMaxRandomly, ProcReplaceValue, \
     ProcReplaceInf, ProcToValues, ProcMap, ProcAsType, ProcReshape, ProcDropNa, \
-    ProcCondition, ProcEval, ProcAutoCompleteColumns
+    ProcCondition, ProcEval, ProcAutoCompleteColumns, ProcMixedRadixEncode
 
 def isnan_obj(x):
     if x is None:
@@ -95,7 +95,10 @@ def create_test_df_polars():
             False,
             True
         ],
-        "category_column": ["A", "B", "A", "C", "B", "A"]
+        "category_column": ["A", "B", "A", "C", "B", "A"],
+        "label_1": [1, 2, 3, 3, 2, 1],
+        "label_2": [1, 2, 3, 1, 1, 2],
+        "label_3": [1, 2, 3, 2, 2, 1],
     })
     df = df.with_columns(pl.col("category_column").cast(pl.Categorical))
     return df
@@ -150,7 +153,7 @@ if __name__ == "__main__":
         else:
             for x in [
                 "mean", "max", "min", "median", 1, 2.2,
-                [1, datetime.datetime.now(tz=datetime.UTC), datetime.datetime.now(), 1, 1, 1, 1, 1, 1, 1, 1, True, False, "A"]
+                [1, datetime.datetime.now(tz=datetime.UTC), datetime.datetime.now(), 1, 1, 1, 1, 1, 1, 1, 1, True, False, "A", 1, 1, 1]
             ]:
                 proc = ProcFillNa(x)
                 proc.fit(df)
@@ -348,3 +351,16 @@ if __name__ == "__main__":
                 raise
             except TypeError:
                 pass
+        if itype in ["pl", "pd"]:
+            proc = ProcMixedRadixEncode(["label_1", "label_2", "label_3"], "encoded_target")
+            proc.fit(df)
+            print(proc)
+            df1 = proc(df)
+            df2 = BaseProc.from_dict(json.loads(json.dumps(proc.to_dict()))).__call__(df)
+            assert df1.equals(df2)
+            assert df1["encoded_target"][0] == 0
+            assert df1["encoded_target"][1] == 13
+            assert df1["encoded_target"][2] == 26
+            assert df1["encoded_target"][3] == 11
+            assert df1["encoded_target"][4] == 10
+            assert df1["encoded_target"][5] == 3

@@ -6,9 +6,13 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler, QuantileTransfor
 from sklearn.decomposition import PCA
 try:
     # The import time is vely slow, which is about 8 second. So this import module is optional.
-    import umap # pip install umap-learn==0.5.5
+    import umap
 except ModuleNotFoundError:
-    pass
+    umap = None
+try:
+    from kkgbdt.functions import labels_encoder_by_mixed_radix
+except ModuleNotFoundError:
+    labels_encoder_by_mixed_radix = None
 
 # local package
 from .util.dataframe import query
@@ -338,6 +342,7 @@ class ProcUMAP(ProcSKLearn):
     see: https://github.com/lmcinnes/umap
     """
     def __init__(self, *args, **kwargs):
+        assert umap is not None, "Please install umap-learn: pip install umap-learn==0.5.5"
         super().__init__(umap.UMAP, *args, **kwargs)
 
 class ProcFillNa(BaseProc):
@@ -917,4 +922,41 @@ class ProcAutoCompleteColumns(BaseProc):
         ins.columns = dict_proc["columns"]
         ins.dtypes  = unmask_values_for_json(dict_proc["dtypes"])
         set_attributes(ins, dict_proc, ["__class__", "columns", "dtypes"])
+        return ins
+
+class ProcMixedRadixEncode(BaseProc):
+    def __init__(self, columns: list[str], colname_encoded: str, **kwargs):
+        assert check_type_list(columns, str)
+        assert len(columns) >= 2
+        assert isinstance(colname_encoded, str)
+        assert labels_encoder_by_mixed_radix is not None, "Please install kkgbdt."
+        super().__init__(**kwargs)
+        self.columns         = columns
+        self.colname_encoded = colname_encoded
+    def fit_main(self, input: pd.DataFrame | pl.DataFrame):
+        assert isinstance(input, (pd.DataFrame, pl.DataFrame)), f"input: {type(input)}"
+        n_class = len(self.columns)
+        ndf     = input[self.columns].to_numpy()
+        assert np.all((ndf >= 1) & (ndf <= n_class))
+    def call_main(self, input: pd.DataFrame | pl.DataFrame):
+        output = input
+        assert isinstance(input, (pd.DataFrame, pl.DataFrame)), f"input: {type(input)}"
+        n_class = len(self.columns)
+        ndf     = output[self.columns].to_numpy()
+        assert np.all((ndf >= 1) & (ndf <= n_class))
+        ndf     = labels_encoder_by_mixed_radix(ndf - 1)
+        if self.type_in == "pd":
+            output[self.colname_encoded] = ndf
+        elif self.type_in == "pl":
+            output = output.with_columns(pl.Series(self.colname_encoded, ndf))
+        return output
+    def to_dict(self) -> dict:
+        return super().to_dict() | {
+            "columns": self.columns,
+            "colname_encoded": self.colname_encoded,
+        }
+    @classmethod
+    def from_dict(cls, dict_proc: dict):
+        ins = cls(dict_proc["columns"], dict_proc["colname_encoded"])
+        set_attributes(ins, dict_proc, ["__class__", "columns", "colname_encoded"])
         return ins
