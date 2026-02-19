@@ -43,7 +43,7 @@ def predict_model(model, input: np.ndarray, is_reg: bool=False, func_predict: st
     if len(output.shape) == 1: output = output.reshape(-1, 1)
     if is_reg:
         df[[f"predict_{i}" for i in range(output.shape[-1])]] = output
-        LOGGER.info(f"we define 'predict' as 'predict_0'.")
+        LOGGER.info(f"we define column name 'predict' as 'predict_0'.")
         df["predict"] = df["predict_0"].copy()
     else:
         if output.shape[-1] == 1:
@@ -80,11 +80,18 @@ def eval_model(input_x: np.ndarray, input_y: np.ndarray, model=None, is_reg: boo
     se = pd.Series(dtype=object)
     se["n_data"] = df.shape[0]
     if is_reg:
-        assert len(input_y.shape) == 1
-        df["answer"] = input_y
-        se["r2"]   = r2_score(input_y, df["predict"])
-        se["rmse"] = np.sqrt( ((input_y - df["predict"].values) ** 2).sum() / input_y.shape[0] )
-        se["mae"]  = (np.abs(input_y - df["predict"].values)).sum() / input_y.shape[0]
+        assert len(input_y.shape) in [1, 2]
+        if len(input_y.shape) == 1:
+            df["answer"] = input_y
+            se["r2"]   = r2_score(input_y, df["predict"])
+            se["rmse"] = np.sqrt( ((input_y - df["predict"].to_numpy()) ** 2).sum() / input_y.shape[0] )
+            se["mae"]  = (np.abs(input_y - df["predict"].to_numpy())).sum() / input_y.shape[0]
+        else:
+            for i in range(input_y.shape[1]):
+                df[f"answer_{i}"] = input_y[:, i]
+                se[f"r2_{i}"]   = r2_score(input_y[:, i], df[f"predict_{i}"].to_numpy())
+                se[f"rmse_{i}"] = np.sqrt( ((input_y[:, i] - df[f"predict_{i}"].to_numpy()) ** 2).sum() / input_y.shape[0] )
+                se[f"mae_{i}"]  = (np.abs(input_y[:, i] - df[f"predict_{i}"].to_numpy())).sum() / input_y.shape[0]
     else:
         assert len(input_y.shape) in [1,2]
         n_class  = df.columns.str.contains("^predict_proba_", regex=True).sum()
