@@ -245,9 +245,6 @@ class Calibrator(BaseModel):
             self.classes_ = np.sort(np.unique(input_y)).astype(int)
         self.calibrator.fit(input_x, input_y)
         output = self._predict_common(input_x, is_mock=True)
-        assert isinstance(output, (np.ndarray, NdarrayWithErr))
-        if not self.useerr and isinstance(output, NdarrayWithErr):
-            output = output.to_numpy()
         if not self.is_reg:
             if isinstance(output, NdarrayWithErr):
                 output = output.to_numpy()
@@ -279,6 +276,9 @@ class Calibrator(BaseModel):
         input_x, _ = self.check_and_reshape_input(input_x)
         output: np.ndarray | NdarrayWithErr = self.calibrator.predict(input_x)
         assert output.shape == input_x.shape
+        assert isinstance(output, (np.ndarray, NdarrayWithErr))
+        if not self.useerr and isinstance(output, NdarrayWithErr):
+            output = output.to_numpy()
         if is_normalize:
             LOGGER.info("normalize output ...")
             if output.ndim == 2 and output.shape[-1] >= 2:
