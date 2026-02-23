@@ -93,7 +93,7 @@ class MultiModel(BaseModel):
                 models.append(decode_object(x, basedir=basedir))
         return cls(models, dict_model["func_predict"], default_params_for_predict=dict_model["default_params_for_predict"])
     def _predict_common(self, input: np.ndarray, weight: list[float]=None, **kwargs) -> np.ndarray:
-        LOGGER.info(f"START: {self.__class__.__name__}")
+        LOGGER.info(f"START: {self.__class__.__name__}", color=["CYAN", "BOLD"])
         LOGGER.info(f"model predict function: '{self.func_predict}', weight: {weight}, kwargs: {kwargs}")
         assert isinstance(input, np.ndarray), f"type: {type(input)}"
         assert len(input.shape) >= 2
@@ -106,7 +106,7 @@ class MultiModel(BaseModel):
             if output is None: output  = _output
             else:              output += _output
         output = output / sum(weight)
-        LOGGER.info(f"END: {self.__class__.__name__}")
+        LOGGER.info(f"END: {self.__class__.__name__}", color=["CYAN", "BOLD"])
         return output
     def dump_with_loader(self):
         return {
@@ -264,7 +264,7 @@ class Calibrator(BaseModel):
             If is_mock == False, "input_x" must be features.
             If is_mock == True,  "input_x" must be probabilities.
         """
-        LOGGER.info(f"START: {self.__class__.__name__}")
+        LOGGER.info(f"START: {self.__class__.__name__}", color=["CYAN", "BOLD"])
         assert isinstance(is_mock, bool)
         assert isinstance(is_normalize, (bool, type(None)))
         is_normalize = self.is_normalize if is_normalize is None else is_normalize
@@ -286,7 +286,7 @@ class Calibrator(BaseModel):
             else:
                 LOGGER.warning(f"This shape {output.shape} is not supported for normalization.")
         LOGGER.info(f"output ( {type(output)} ) : {output.shape}")
-        LOGGER.info(f"END: {self.__class__.__name__}")
+        LOGGER.info(f"END: {self.__class__.__name__}", color=["CYAN", "BOLD"])
         return output
     def dump_with_loader(self):
         return {
@@ -381,13 +381,25 @@ class ChainModel(BaseModel):
         LOGGER.info(f"START: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         dict_all = {"input": input_x, "models": self.models, "np": np, "pl": pl, "pd": pd, "npe": npe} | kwargs
         LOGGER.info(f"predict pre process ...", color=["CYAN"])
-        dict_all = dict_all | {"input_pre": eval(self.eval_pre, {}, dict_all)}
-        for i, dictwk in enumerate(self.models):
-            LOGGER.info(f"predict model [{i}], name: {dictwk['name']}, model: {dictwk['model']}", color=["CYAN"])
-            output   = eval(dictwk["eval"], {}, dict_all | {"model": dictwk["model"]})
-            dict_all = dict_all | {dictwk["name"]: output.copy()}
+        try:
+            dict_all = dict_all | {"input_pre": eval(self.eval_pre, {}, dict_all)}
+        except Exception as e:
+            LOGGER.error(f"Error: {e}\nself.eval_pre: {self.eval_pre}\ndict_all: {dict_all}")
+            raise e
+        try:
+            for i, dictwk in enumerate(self.models):
+                LOGGER.info(f"predict model [{i}], name: {dictwk['name']}, model: {dictwk['model']}", color=["CYAN"])
+                output   = eval(dictwk["eval"], {}, dict_all | {"model": dictwk["model"]})
+                dict_all = dict_all | {dictwk["name"]: output.copy()}
+        except Exception as e:
+            LOGGER.error(f"Error: {e}\ndictwk['eval']: {dictwk["eval"]}\ndictwk['model']: {dictwk["model"]}\ndict_all: {dict_all}")
+            raise e
         LOGGER.info(f"predict post process ...", color=["CYAN"])
-        output = eval(self.eval_post, {}, dict_all)
+        try:
+            output = eval(self.eval_post, {}, dict_all)
+        except Exception as e:
+            LOGGER.error(f"Error: {e}\nself.eval_post: {self.eval_post}\ndict_all: {dict_all}")
+            raise e
         LOGGER.info(f"END: {self.__class__.__name__}", color=["GREEN", "BOLD"])
         return output
     def dump_with_loader(self):

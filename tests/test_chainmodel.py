@@ -50,23 +50,23 @@ if __name__ == "__main__":
             {
                 "model": manager1,
                 "name": "modelA",
-                "eval": "model.predict(input_x=input_pre, is_row=False, is_exp=True, is_ans=False, n_jobs=n_jobs)[0]",
+                "eval": "model.predict(df=input_pre, is_row=False, is_exp=True, is_ans=False)[0]",
                 "shape": (-1, 6)
             },
             {
                 "model": manager2,
                 "name": "modelB",
-                "eval": "model.predict(input_x=input_pre, is_row=False, is_exp=True, is_ans=False, n_jobs=n_jobs)[0]",
+                "eval": "model.predict(df=input_pre, is_row=False, is_exp=True, is_ans=False, n_jobs=n_jobs)[0]",
                 "shape": (-1, 6)
             },
             {
                 "model": manager3,
                 "name": "modelC",
-                "eval": "model.predict(input_x=input_pre, is_row=False, is_exp=True, is_ans=False, n_jobs=n_jobs)[0][:, -1]",
+                "eval": "model.predict(df=input_pre, is_row=False, is_exp=True, is_ans=False)[0]",
                 "shape": (-1, )
             },
         ],
-        eval_pre="models[0]['model'].proc_call(input, is_row=is_row, is_exp=is_exp, is_ans=is_ans)[0]",
+        eval_pre="input",
         eval_post = """npe.normalize(npe.concatenate([
             modelA[:, 0:1] + modelB[:, 0:1],
             (modelA[:, 1:2] + modelB[:, 1:2]) * modelC.reshape(-1, 1),
