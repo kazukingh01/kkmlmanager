@@ -95,7 +95,7 @@ class MultiModel(BaseModel):
     def _predict_common(self, input: np.ndarray, weight: list[float]=None, **kwargs) -> np.ndarray:
         LOGGER.info(f"START: {self.__class__.__name__}")
         LOGGER.info(f"model predict function: '{self.func_predict}', weight: {weight}, kwargs: {kwargs}")
-        assert isinstance(input, np.ndarray)
+        assert isinstance(input, np.ndarray), f"type: {type(input)}"
         assert len(input.shape) >= 2
         if weight is None: weight = [1.0] * len(self.models)
         assert check_type_list(weight, (int, float))
