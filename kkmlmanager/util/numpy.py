@@ -259,7 +259,7 @@ def isotonic_regression_with_err(input_x: NdarrayWithErr, y_min: float=0.0, y_ma
     addnoise = np.clip(addnoise, min=y_min, max=y_max)
     addnoise = np.moveaxis(addnoise, 2, 1)
     weight   = np.moveaxis(weight.repeat(n_bins).reshape(-1, weight.shape[1], n_bins), 2, 1)
-    ndfbool  = np.stack([addnoise[::, i] > addnoise[::, i + 1] for i in range(addnoise.shape[-1] - 1)]).sum(axis=0).sum(axis=-1).astype(bool)
+    ndfbool  = np.stack([addnoise[..., i] > addnoise[..., i + 1] for i in range(addnoise.shape[-1] - 1)]).sum(axis=0).sum(axis=-1).astype(bool)
     if ndfbool.sum() == 0:
         return input_x.val
     else:

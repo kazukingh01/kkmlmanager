@@ -26,7 +26,7 @@ if __name__ == "__main__":
         dataset.metadata.columns_feature, dataset.metadata.columns_target,
         columns_oth=[dataset.metadata.columns_feature[0], ], is_reg=False, n_jobs=8
     )
-    manager2.set_model(KkGBDT, n_class, model_func_predict="predict", mode="lgb", learning_rate=0.1, max_bin=64, max_depth=-1)
+    manager2.set_model(KkGBDT, n_class, model_func_predict="predict", mode="cat", learning_rate=0.1, max_bin=64, max_depth=6)
     manager2.proc_registry()
     manager2.fit_cross_validation(
         df_train, n_split=3, n_cv=3, is_proc_fit_every_cv=True, is_save_cv_models=True,
@@ -56,7 +56,7 @@ if __name__ == "__main__":
             {
                 "model": manager2,
                 "name": "modelB",
-                "eval": "model.predict(df=input_pre, is_row=False, is_exp=True, is_ans=False, n_jobs=n_jobs)[0]",
+                "eval": "model.predict(df=input_pre, is_row=False, is_exp=True, is_ans=False)[0]",
                 "shape": (-1, 6)
             },
             {
@@ -82,6 +82,6 @@ if __name__ == "__main__":
     for x in chainmodel.models:
         x["model"].set_post_model(
             is_cv=True, calibmodel=0, is_calib_after_cv=False, list_cv=None, 
-            is_normalize=True, n_bins=50, df_calib=None, useerr=True
+            is_normalize=False, n_bins=50, df_calib=None, useerr=True
         )
     ndf_pred = chainmodel.predict(df_test, is_row=False, is_exp=True, is_ans=True, n_jobs=-1)
